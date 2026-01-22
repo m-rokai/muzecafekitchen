@@ -135,6 +135,10 @@ export const settingsAPI = {
   getTaxRate: () => request('/admin/public/settings')
     .then(s => parseFloat(s?.tax_rate || '0.0825'))
     .catch(() => 0.0825), // Fallback on error
+
+  // Public announcement
+  getAnnouncement: () => request('/admin/public/announcement')
+    .catch(() => ({ enabled: false, text: '' })),
 };
 
 // ============ Admin endpoints (all protected except verifyPin) ============

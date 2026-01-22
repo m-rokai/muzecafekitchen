@@ -62,6 +62,21 @@ router.get('/public/settings', (req, res) => {
   }
 });
 
+// Public announcement endpoint
+router.get('/public/announcement', (req, res) => {
+  try {
+    const enabled = db.getSetting('announcement_enabled') === 'true';
+    const text = db.getSetting('announcement_text') || '';
+    res.json({
+      enabled,
+      text: enabled ? text : '',
+    });
+  } catch (err) {
+    console.error('Error getting announcement:', err);
+    res.status(500).json({ message: 'Failed to load announcement' });
+  }
+});
+
 // ============ All routes below require authentication ============
 router.use(requireAuth);
 router.use(adminRateLimit);

@@ -32,6 +32,18 @@ try {
   console.error('Migration error:', err);
 }
 
+// Migration: Add announcement settings
+try {
+  const announcement = db.prepare("SELECT value FROM settings WHERE key = 'announcement_text'").get();
+  if (!announcement) {
+    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run('announcement_text', '');
+    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run('announcement_enabled', 'false');
+    console.log('Migration: Added announcement settings');
+  }
+} catch (err) {
+  console.error('Migration error (announcement):', err);
+}
+
 // Seed database with initial menu data if empty
 export function seedDatabase() {
   const itemCount = db.prepare('SELECT COUNT(*) as count FROM menu_items').get().count;

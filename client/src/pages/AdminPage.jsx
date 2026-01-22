@@ -26,6 +26,7 @@ import {
   Upload,
   Clock,
   HardDrive,
+  Megaphone,
 } from 'lucide-react';
 import { adminAPI, menuAPI, isAuthenticated as checkAuth } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
@@ -1256,6 +1257,13 @@ function SettingsSection({ settings, onUpdate }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
 
+  // Announcement state
+  const [announcementText, setAnnouncementText] = useState('');
+  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [savingAnnouncement, setSavingAnnouncement] = useState(false);
+  const [announcementResult, setAnnouncementResult] = useState(null);
+  const [announcementError, setAnnouncementError] = useState(null);
+
   // PIN change state
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
@@ -1269,7 +1277,27 @@ function SettingsSection({ settings, onUpdate }) {
   useEffect(() => {
     const rate = parseFloat(settings.tax_rate || 0.0825);
     setTaxRate((rate * 100).toFixed(2));
-  }, [settings.tax_rate]);
+    setAnnouncementText(settings.announcement_text || '');
+    setAnnouncementEnabled(settings.announcement_enabled === 'true');
+  }, [settings.tax_rate, settings.announcement_text, settings.announcement_enabled]);
+
+  const handleSaveAnnouncement = async () => {
+    setSavingAnnouncement(true);
+    setAnnouncementError(null);
+    setAnnouncementResult(null);
+
+    try {
+      await adminAPI.updateSetting('announcement_text', announcementText);
+      await adminAPI.updateSetting('announcement_enabled', announcementEnabled.toString());
+      setAnnouncementResult('Announcement updated successfully');
+      onUpdate();
+    } catch (err) {
+      console.error('Failed to save announcement:', err);
+      setAnnouncementError(err.message || 'Failed to save announcement');
+    } finally {
+      setSavingAnnouncement(false);
+    }
+  };
 
   const handleSaveTaxRate = async () => {
     setSaving(true);
@@ -1338,6 +1366,89 @@ function SettingsSection({ settings, onUpdate }) {
 
   return (
     <div className="space-y-6">
+      {/* Announcement Banner Setting */}
+      <div className="card p-6">
+        <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+          <Megaphone className="w-6 h-6" />
+          Announcement Banner
+        </h2>
+        <p className="text-gray-600 text-sm mb-4">
+          Display a banner on the menu page to announce specials, soups of the day, or important notices.
+        </p>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Announcement Message
+            </label>
+            <textarea
+              value={announcementText}
+              onChange={(e) => setAnnouncementText(e.target.value)}
+              className="input w-full"
+              rows={2}
+              placeholder="e.g., Today's soup: Tomato Basil! | Happy Hour: 2-4pm - 20% off all drinks"
+              maxLength={500}
+            />
+            <p className="text-xs text-gray-500 mt-1">{announcementText.length}/500 characters</p>
+          </div>
+
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={announcementEnabled}
+              onChange={(e) => setAnnouncementEnabled(e.target.checked)}
+              className="w-5 h-5 rounded border-gray-300 text-muze-accent focus:ring-muze-accent"
+            />
+            <span className="font-medium text-gray-700">Show announcement banner</span>
+          </label>
+
+          <button
+            onClick={handleSaveAnnouncement}
+            disabled={savingAnnouncement}
+            className="btn btn-primary px-6 py-3 flex items-center gap-2"
+          >
+            {savingAnnouncement ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              'Save Announcement'
+            )}
+          </button>
+        </div>
+
+        {announcementResult && (
+          <div className="mt-4 p-3 bg-green-50 rounded-lg border border-green-200 flex items-center gap-2">
+            <Check className="w-5 h-5 text-green-500" />
+            <span className="text-green-800 text-sm">{announcementResult}</span>
+          </div>
+        )}
+
+        {announcementError && (
+          <div className="mt-4 p-3 bg-red-50 rounded-lg border border-red-200 flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-red-500" />
+            <span className="text-red-800 text-sm">{announcementError}</span>
+          </div>
+        )}
+
+        {/* Preview */}
+        {announcementText && (
+          <div className="mt-4">
+            <p className="text-sm font-medium text-gray-700 mb-2">Preview:</p>
+            <div className={`bg-muze-gold/90 text-muze-dark px-4 py-3 rounded-lg ${!announcementEnabled ? 'opacity-50' : ''}`}>
+              <div className="flex items-center gap-3">
+                <Megaphone className="w-5 h-5 flex-shrink-0" />
+                <p className="text-sm font-medium">{announcementText}</p>
+              </div>
+            </div>
+            {!announcementEnabled && (
+              <p className="text-xs text-gray-500 mt-1">Banner is currently hidden. Enable it above to show on the menu.</p>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Tax Rate Setting */}
       <div className="card p-6">
         <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">

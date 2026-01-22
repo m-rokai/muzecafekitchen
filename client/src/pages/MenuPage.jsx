@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { ShoppingCart, Search, Coffee, Receipt } from 'lucide-react';
-import { menuAPI, orderAPI } from '../utils/api';
+import { ShoppingCart, Search, Coffee, Receipt, Megaphone } from 'lucide-react';
+import { menuAPI, orderAPI, settingsAPI } from '../utils/api';
 import { useCart } from '../context/CartContext';
 import { formatPriceFromDollars, formatPickupNumber } from '../utils/formatters';
 import CategoryNav from '../components/Menu/CategoryNav';
@@ -22,11 +22,22 @@ export default function MenuPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeOrder, setActiveOrder] = useState(null);
+  const [announcement, setAnnouncement] = useState({ enabled: false, text: '' });
 
   useEffect(() => {
     loadMenu();
     checkForActiveOrder();
+    loadAnnouncement();
   }, []);
+
+  async function loadAnnouncement() {
+    try {
+      const data = await settingsAPI.getAnnouncement();
+      setAnnouncement(data);
+    } catch (err) {
+      // Silently fail - announcement is optional
+    }
+  }
 
   // Check if customer has an active order they can return to
   async function checkForActiveOrder() {
@@ -190,6 +201,16 @@ export default function MenuPage() {
           onSelectCategory={setSelectedCategory}
         />
       </header>
+
+      {/* Announcement Banner */}
+      {announcement.enabled && announcement.text && (
+        <div className="bg-muze-gold/90 text-muze-dark px-4 py-3">
+          <div className="max-w-7xl mx-auto flex items-center gap-3">
+            <Megaphone className="w-5 h-5 flex-shrink-0" />
+            <p className="text-sm font-medium">{announcement.text}</p>
+          </div>
+        </div>
+      )}
 
       {/* Menu Items */}
       <main className="max-w-7xl mx-auto px-4 py-6">
