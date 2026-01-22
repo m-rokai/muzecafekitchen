@@ -1,36 +1,38 @@
-# Fly.io configuration for Muze Cafe Kitchen
-# See https://fly.io/docs/reference/configuration/
+# fly.toml app configuration file generated for muzecafe-kitchen on 2026-01-22T14:01:46-08:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "muzecafe-kitchen"
-primary_region = "lax"
+app = 'muzecafe-kitchen'
+primary_region = 'lax'
 
 [build]
 
 [env]
-  NODE_ENV = "production"
-  PORT = "3001"
-  DATABASE_PATH = "/data/muze_orders.db"
-  STATIC_PATH = "/app/public"
+  DATABASE_PATH = '/data/muze_orders.db'
+  NODE_ENV = 'production'
+  PORT = '3001'
+  STATIC_PATH = '/app/public'
+
+[[mounts]]
+  source = 'muze_data'
+  destination = '/data'
 
 [http_service]
   internal_port = 3001
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-  processes = ["app"]
+  processes = ['app']
 
-[[http_service.checks]]
-  grace_period = "10s"
-  interval = "30s"
-  method = "GET"
-  path = "/api/health"
-  timeout = "5s"
-
-[mounts]
-  source = "muze_data"
-  destination = "/data"
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/api/health'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'

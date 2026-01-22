@@ -15,39 +15,36 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: {
-    origin: function(origin, callback) {
-      if (!origin) return callback(null, true);
-      if (origin.match(/^http:\/\/localhost:\d+$/)) {
-        return callback(null, true);
-      }
-      if (origin === process.env.CLIENT_URL) {
-        return callback(null, true);
-      }
-      callback(new Error('Not allowed by CORS'));
-    },
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  },
-});
-
-// Middleware
-app.use(cors({
+// CORS configuration
+const corsOptions = {
   origin: function(origin, callback) {
-    // Allow requests with no origin (mobile apps, curl, etc.)
+    // Allow requests with no origin (same-origin, mobile apps, curl, etc.)
     if (!origin) return callback(null, true);
     // Allow all localhost ports in development
     if (origin.match(/^http:\/\/localhost:\d+$/)) {
+      return callback(null, true);
+    }
+    // Allow Fly.io domains
+    if (origin.match(/\.fly\.dev$/)) {
       return callback(null, true);
     }
     // Allow configured client URL
     if (origin === process.env.CLIENT_URL) {
       return callback(null, true);
     }
+    // In production, allow same origin
+    if (process.env.NODE_ENV === 'production') {
+      return callback(null, true);
+    }
     callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-}));
+};
+
+const io = new Server(httpServer, { cors: corsOptions });
+
+// Middleware
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Make io accessible to routes
@@ -57,23 +54,6 @@ app.set('io', io);
 app.use('/api/menu', menuRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
-
-// Root endpoint - helpful message for direct access
-app.get('/', (req, res) => {
-  res.json({
-    name: 'Muze Cafe Order API',
-    status: 'running',
-    version: '1.0.0',
-    endpoints: {
-      menu: '/api/menu',
-      orders: '/api/orders',
-      admin: '/api/admin',
-      health: '/api/health',
-    },
-    frontend: 'http://localhost:5173',
-    message: 'This is the API server. Access the app at the frontend URL.',
-  });
-});
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -86,8 +66,26 @@ if (process.env.NODE_ENV === 'production') {
   const staticPath = process.env.STATIC_PATH || path.join(__dirname, '../client/dist');
   app.use(express.static(staticPath));
 
+  // Serve React app for all non-API routes
   app.get('*', (req, res) => {
     res.sendFile(path.join(staticPath, 'index.html'));
+  });
+} else {
+  // Development only - show API info at root
+  app.get('/', (req, res) => {
+    res.json({
+      name: 'Muze Cafe Order API',
+      status: 'running',
+      version: '1.0.0',
+      endpoints: {
+        menu: '/api/menu',
+        orders: '/api/orders',
+        admin: '/api/admin',
+        health: '/api/health',
+      },
+      frontend: 'http://localhost:5173',
+      message: 'This is the API server. Access the app at the frontend URL.',
+    });
   });
 }
 
