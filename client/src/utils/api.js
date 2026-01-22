@@ -1,4 +1,7 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+// In production, use relative URL since client is served from same origin
+// In development, use localhost:3001
+const API_BASE = import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? '/api' : 'http://localhost:3001/api');
 
 // ============ Auth Token Management ============
 const AUTH_TOKEN_KEY = 'muze_auth_token';

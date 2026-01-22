@@ -5,7 +5,9 @@ import { CheckCircle, Clock, Coffee, ArrowLeft, Loader2, Wifi, WifiOff } from 'l
 import { orderAPI } from '../utils/api';
 import { formatPriceFromDollars, formatPickupNumber, formatTime } from '../utils/formatters';
 
-const SOCKET_URL = import.meta.env.VITE_WS_URL || 'http://localhost:3001';
+// In production, connect to same origin; in dev, use localhost:3001
+const SOCKET_URL = import.meta.env.VITE_WS_URL ||
+  (import.meta.env.PROD ? window.location.origin : 'http://localhost:3001');
 
 export default function ConfirmationPage() {
   const { orderId } = useParams();

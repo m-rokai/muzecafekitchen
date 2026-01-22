@@ -1,0 +1,45 @@
+# Dependencies (will be installed in container)
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Build artifacts
+client/dist/
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Data imports
+*.csv
+*.xlsx
+
+# Claude
+.claude/
+
+# Fly
+fly.toml

@@ -7,7 +7,8 @@ import { categories, menuItems, modifierGroups, modifierOptions } from './seed.j
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const dbPath = path.join(__dirname, 'muze_orders.db');
+// Use DATABASE_PATH env var for production (Fly.io persistent volume)
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'muze_orders.db');
 const schemaPath = path.join(__dirname, 'schema.sql');
 
 // Initialize database

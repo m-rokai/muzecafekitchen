@@ -82,10 +82,12 @@ app.get('/api/health', (req, res) => {
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../client/dist')));
+  // In Docker, client is built to ./public; locally it's ../client/dist
+  const staticPath = process.env.STATIC_PATH || path.join(__dirname, '../client/dist');
+  app.use(express.static(staticPath));
 
   app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/dist/index.html'));
+    res.sendFile(path.join(staticPath, 'index.html'));
   });
 }
 

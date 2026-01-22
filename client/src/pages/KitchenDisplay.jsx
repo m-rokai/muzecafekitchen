@@ -5,7 +5,9 @@ import { orderAPI, adminAPI, isAuthenticated as checkAuth } from '../utils/api';
 import { formatPickupNumber, formatTimeSince } from '../utils/formatters';
 import PinEntry from '../components/PinEntry';
 
-const SOCKET_URL = import.meta.env.VITE_WS_URL || 'http://localhost:3001';
+// In production, connect to same origin; in dev, use localhost:3001
+const SOCKET_URL = import.meta.env.VITE_WS_URL ||
+  (import.meta.env.PROD ? window.location.origin : 'http://localhost:3001');
 
 export default function KitchenDisplay() {
   const [authState, setAuthState] = useState('checking'); // 'checking' | 'authenticated' | 'unauthenticated'
