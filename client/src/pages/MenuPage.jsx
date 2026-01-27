@@ -204,10 +204,10 @@ export default function MenuPage() {
 
       {/* Announcement Banner */}
       {announcement.enabled && announcement.text && (
-        <div className="bg-muze-gold/90 text-muze-dark px-4 py-3">
-          <div className="max-w-7xl mx-auto flex items-center gap-3">
-            <Megaphone className="w-5 h-5 flex-shrink-0" />
-            <p className="text-sm font-medium">{announcement.text}</p>
+        <div className="bg-muze-gold text-muze-dark px-4 py-3 shadow-sm">
+          <div className="max-w-7xl mx-auto flex items-start sm:items-center gap-3">
+            <Megaphone className="w-5 h-5 flex-shrink-0 mt-0.5 sm:mt-0" />
+            <p className="text-sm sm:text-base font-medium leading-relaxed whitespace-pre-line">{announcement.text}</p>
           </div>
         </div>
       )}
