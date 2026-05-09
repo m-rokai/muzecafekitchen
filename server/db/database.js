@@ -11,6 +11,17 @@ const __dirname = path.dirname(__filename);
 const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'muze_orders.db');
 const schemaPath = path.join(__dirname, 'schema.sql');
 
+function getMenuImageUrl(itemName) {
+  const slug = itemName
+    .toLowerCase()
+    .replace(/["']/g, '')
+    .replace(/&/g, ' ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return `/uploads/menu-${slug}.webp`;
+}
+
 // Initialize database
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
@@ -44,6 +55,34 @@ try {
   console.error('Migration error (announcement):', err);
 }
 
+// Migration: Seed generated menu image URLs for baseline menu items. Keep any
+// manually uploaded/admin-selected images intact.
+try {
+  const seedItemNames = new Set(menuItems.map(item => item.name));
+  const itemsWithoutImages = db.prepare(`
+    SELECT id, name
+    FROM menu_items
+    WHERE image_url IS NULL OR image_url = ''
+  `).all();
+
+  if (itemsWithoutImages.length > 0) {
+    const updateImage = db.prepare('UPDATE menu_items SET image_url = ? WHERE id = ?');
+    let updatedCount = 0;
+
+    for (const item of itemsWithoutImages) {
+      if (!seedItemNames.has(item.name)) continue;
+      updateImage.run(getMenuImageUrl(item.name), item.id);
+      updatedCount++;
+    }
+
+    if (updatedCount > 0) {
+      console.log(`Migration: Added generated image URLs for ${updatedCount} seeded menu items`);
+    }
+  }
+} catch (err) {
+  console.error('Migration error (menu image URLs):', err);
+}
+
 // Seed database with initial menu data if empty
 export function seedDatabase() {
   const itemCount = db.prepare('SELECT COUNT(*) as count FROM menu_items').get().count;
@@ -65,8 +104,8 @@ export function seedDatabase() {
 
     // Insert menu items
     const insertItem = db.prepare(`
-      INSERT INTO menu_items (name, description, price, category_id, available, sort_order)
-      VALUES (?, ?, ?, ?, 1, ?)
+      INSERT INTO menu_items (name, description, price, category_id, image_url, available, sort_order)
+      VALUES (?, ?, ?, ?, ?, 1, ?)
     `);
 
     let sortOrder = 0;
@@ -74,7 +113,7 @@ export function seedDatabase() {
       // Find category by id from seed data
       const category = categories.find(c => c.id === item.category_id);
       const categoryId = category ? categoryMap.get(category.name) : null;
-      insertItem.run(item.name, item.description || '', item.price, categoryId, sortOrder++);
+      insertItem.run(item.name, item.description || '', item.price, categoryId, getMenuImageUrl(item.name), sortOrder++);
     }
 
     // Insert modifier groups
