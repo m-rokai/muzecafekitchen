@@ -1,26 +1,35 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Minus, Plus, Trash2, ShoppingBag } from 'lucide-react';
 import { useCart } from '../context/CartContext';
+import { settingsAPI } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
+import GradientMesh from '../components/glass/GradientMesh';
+import GlassPanel from '../components/glass/GlassPanel';
 
 export default function CartPage() {
   const navigate = useNavigate();
   const { items, cartTotal, updateQuantity, removeItem, getItemTotal } = useCart();
+  const [taxRate, setTaxRate] = useState(0.0825);
 
-  const TAX_RATE = 0.0825; // 8.25% tax
-  const tax = cartTotal * TAX_RATE;
+  useEffect(() => {
+    settingsAPI.getTaxRate().then(setTaxRate).catch(() => {});
+  }, []);
+
+  const tax = cartTotal * taxRate;
   const total = cartTotal + tax;
 
   if (items.length === 0) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center p-8">
-          <ShoppingBag className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Your cart is empty</h2>
-          <p className="text-gray-500 mb-6">Add some delicious items to get started!</p>
+      <div className="min-h-screen flex items-center justify-center relative">
+        <GradientMesh />
+        <div className="text-center p-8 relative z-10">
+          <ShoppingBag className="w-16 h-16 text-muze-brown/40 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-muze-dark mb-2">Your cart is empty</h2>
+          <p className="text-muze-dark/60 mb-6">Add something delicious to get started.</p>
           <button
             onClick={() => navigate('/')}
-            className="btn btn-primary"
+            className="px-6 py-3 rounded-full bg-muze-dark text-muze-gold font-semibold hover:bg-muze-brown hover:text-white transition-colors shadow-md"
           >
             Browse Menu
           </button>
@@ -30,45 +39,51 @@ export default function CartPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen pb-32 relative">
+      <GradientMesh />
+
       {/* Header */}
-      <header className="bg-white border-b sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto px-4 py-4">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => navigate('/')}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <h1 className="text-xl font-bold">Your Cart</h1>
+      <header className="sticky top-0 z-30 backdrop-blur-md bg-white/60 border-b border-white/40">
+        <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
+          <button
+            onClick={() => navigate('/')}
+            className="w-11 h-11 rounded-full bg-white/80 hover:bg-white flex items-center justify-center transition-colors"
+            aria-label="Back to menu"
+          >
+            <ArrowLeft className="w-5 h-5 text-muze-dark" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-muze-dark">Your Cart</h1>
+            <p className="text-sm text-muze-dark/60">
+              {items.length} item{items.length === 1 ? '' : 's'}
+            </p>
           </div>
         </div>
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6">
         {/* Cart Items */}
-        <div className="space-y-4 mb-8">
+        <div className="space-y-3 mb-6">
           {items.map(item => (
-            <div key={item.cartId} className="card p-4">
-              <div className="flex justify-between mb-2">
-                <h3 className="font-semibold text-gray-900">{item.name}</h3>
+            <div key={item.cartId} className="rounded-2xl bg-white/80 backdrop-blur-sm border border-white/70 shadow-sm p-5">
+              <div className="flex justify-between items-start gap-3">
+                <h3 className="font-bold text-muze-dark text-lg leading-tight">{item.name}</h3>
                 <button
                   onClick={() => removeItem(item.cartId)}
-                  className="text-gray-400 hover:text-red-500 transition-colors"
+                  className="text-muze-dark/40 hover:text-red-500 transition-colors p-1"
+                  aria-label="Remove"
                 >
                   <Trash2 className="w-5 h-5" />
                 </button>
               </div>
 
-              {/* Modifiers */}
               {item.modifiers && item.modifiers.length > 0 && (
-                <div className="text-sm text-gray-600 mb-2">
+                <div className="text-sm text-muze-dark/60 mt-1">
                   {item.modifiers.map((mod, i) => (
                     <span key={mod.id}>
                       {mod.display_name || mod.name}
                       {mod.price_adjustment > 0 && (
-                        <span className="text-muze-accent"> +{formatPriceFromDollars(mod.price_adjustment)}</span>
+                        <span className="text-muze-brown"> +{formatPriceFromDollars(mod.price_adjustment)}</span>
                       )}
                       {i < item.modifiers.length - 1 && ', '}
                     </span>
@@ -76,31 +91,31 @@ export default function CartPage() {
                 </div>
               )}
 
-              {/* Special instructions */}
               {item.specialInstructions && (
-                <p className="text-sm text-gray-500 italic mb-3 bg-gray-50 p-2 rounded">
+                <p className="text-sm text-muze-dark/50 italic mt-2 bg-muze-cream/60 rounded-lg px-3 py-2">
                   "{item.specialInstructions}"
                 </p>
               )}
 
-              {/* Quantity and price */}
-              <div className="flex items-center justify-between pt-3 border-t">
-                <div className="flex items-center gap-3">
+              <div className="flex items-center justify-between mt-4 pt-4 border-t border-muze-gold/10">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => updateQuantity(item.cartId, item.quantity - 1)}
-                    className="w-10 h-10 rounded-lg border-2 border-gray-200 flex items-center justify-center hover:border-muze-accent hover:text-muze-accent transition-colors"
+                    className="w-11 h-11 rounded-full border-2 border-muze-gold/30 flex items-center justify-center hover:border-muze-gold hover:bg-muze-gold/10 transition-colors"
+                    aria-label="Decrease"
                   >
-                    <Minus className="w-4 h-4" />
+                    <Minus className="w-4 h-4 text-muze-dark" />
                   </button>
-                  <span className="w-8 text-center text-lg font-semibold">{item.quantity}</span>
+                  <span className="w-9 text-center text-xl font-bold text-muze-dark">{item.quantity}</span>
                   <button
                     onClick={() => updateQuantity(item.cartId, item.quantity + 1)}
-                    className="w-10 h-10 rounded-lg border-2 border-gray-200 flex items-center justify-center hover:border-muze-accent hover:text-muze-accent transition-colors"
+                    className="w-11 h-11 rounded-full border-2 border-muze-gold/30 flex items-center justify-center hover:border-muze-gold hover:bg-muze-gold/10 transition-colors"
+                    aria-label="Increase"
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-4 h-4 text-muze-dark" />
                   </button>
                 </div>
-                <span className="text-xl font-bold text-muze-accent">
+                <span className="text-2xl font-bold text-muze-brown">
                   {formatPriceFromDollars(getItemTotal(item))}
                 </span>
               </div>
@@ -108,51 +123,49 @@ export default function CartPage() {
           ))}
         </div>
 
-        {/* Add more items */}
+        {/* Add more */}
         <button
           onClick={() => navigate('/')}
-          className="w-full py-3 text-muze-accent font-medium border-2 border-dashed border-muze-accent/30 rounded-xl hover:border-muze-accent hover:bg-muze-accent/5 transition-colors mb-8"
+          className="w-full py-4 text-muze-brown font-semibold rounded-2xl border-2 border-dashed border-muze-brown/30 hover:border-muze-brown hover:bg-muze-brown/5 transition-colors mb-6"
         >
           + Add more items
         </button>
 
-        {/* Order Summary */}
-        <div className="card p-6">
-          <h3 className="font-semibold text-gray-900 mb-4">Order Summary</h3>
-          <div className="space-y-3 text-gray-600">
+        {/* Order Summary in Glass */}
+        <GlassPanel intensity="chrome" panelClassName="p-6" overLight>
+          <h3 className="font-bold text-muze-dark text-lg mb-4">Order Summary</h3>
+          <div className="space-y-3 text-muze-dark/80">
             <div className="flex justify-between">
               <span>Subtotal</span>
-              <span>{formatPriceFromDollars(cartTotal)}</span>
+              <span className="font-medium">{formatPriceFromDollars(cartTotal)}</span>
             </div>
             <div className="flex justify-between">
-              <span>Tax (8.25%)</span>
-              <span>{formatPriceFromDollars(tax)}</span>
+              <span>Tax ({(taxRate * 100).toFixed(2)}%)</span>
+              <span className="font-medium">{formatPriceFromDollars(tax)}</span>
             </div>
-            <div className="flex justify-between pt-3 border-t text-gray-900 font-semibold text-lg">
+            <div className="flex justify-between pt-3 border-t border-muze-gold/30 text-muze-dark text-xl font-bold">
               <span>Total</span>
-              <span className="text-muze-accent">{formatPriceFromDollars(total)}</span>
+              <span className="text-muze-brown">{formatPriceFromDollars(total)}</span>
             </div>
           </div>
-        </div>
+        </GlassPanel>
 
-        {/* Payment Notice */}
-        <div className="mt-6 p-4 bg-amber-50 rounded-xl border border-amber-200">
-          <p className="text-amber-800 text-sm text-center">
-            <strong>Pay at pickup:</strong> You'll pay when you pick up your order at Muze Office.
+        {/* Pay-at-pickup */}
+        <div className="mt-5 p-4 bg-amber-50/80 rounded-2xl border border-amber-200">
+          <p className="text-amber-900 text-sm text-center">
+            <strong>Pay at pickup.</strong> Settle up when you collect your order at Muze Office.
           </p>
         </div>
       </main>
 
-      {/* Checkout Button */}
-      <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t">
-        <div className="max-w-2xl mx-auto">
-          <button
-            onClick={() => navigate('/checkout')}
-            className="w-full btn btn-primary py-4 text-lg"
-          >
-            Continue to Checkout - {formatPriceFromDollars(total)}
-          </button>
-        </div>
+      {/* Sticky Checkout CTA */}
+      <div className="fixed bottom-4 left-0 right-0 px-4 z-40">
+        <button
+          onClick={() => navigate('/checkout')}
+          className="w-full max-w-2xl mx-auto block py-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-lg hover:bg-muze-brown hover:text-white transition-colors shadow-2xl"
+        >
+          Continue to Checkout · {formatPriceFromDollars(total)}
+        </button>
       </div>
     </div>
   );

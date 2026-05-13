@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { Clock, ChefHat, CheckCircle, Bell, Volume2, VolumeX, RefreshCw, LogOut } from 'lucide-react';
+import { Clock, ChefHat, CheckCircle, Bell, Volume2, VolumeX, RefreshCw, LogOut, Lock, Unlock } from 'lucide-react';
 import { orderAPI, adminAPI, isAuthenticated as checkAuth } from '../utils/api';
 import { formatPickupNumber, formatTimeSince } from '../utils/formatters';
 import PinEntry from '../components/PinEntry';
@@ -19,6 +19,11 @@ export default function KitchenDisplay() {
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [updatingOrderId, setUpdatingOrderId] = useState(null);
   const [updateError, setUpdateError] = useState(null);
+  const [kitchenOpen, setKitchenOpen] = useState(true);
+  const [kitchenClosedMessage, setKitchenClosedMessage] = useState('');
+  const [kitchenToggling, setKitchenToggling] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [closeMessageDraft, setCloseMessageDraft] = useState('');
   const socketRef = useRef(null);
   const audioRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -72,8 +77,9 @@ export default function KitchenDisplay() {
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     audioRef.current = audioContext;
 
-    // Load initial orders
+    // Load initial orders + kitchen status
     loadOrders();
+    loadKitchenStatus();
 
     // Connect to WebSocket with auto-reconnection
     function connectSocket() {
@@ -129,6 +135,12 @@ export default function KitchenDisplay() {
             .filter(o => o.status !== 'completed' && o.status !== 'cancelled')
         );
       });
+
+      socketRef.current.on('kitchen-status', (status) => {
+        console.log('Kitchen status changed:', status);
+        setKitchenOpen(!!status.open);
+        setKitchenClosedMessage(status.message || '');
+      });
     }
 
     // Initial connection
@@ -154,6 +166,32 @@ export default function KitchenDisplay() {
       console.error('Failed to load orders:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadKitchenStatus() {
+    try {
+      const status = await orderAPI.getKitchenStatus();
+      setKitchenOpen(!!status.open);
+      setKitchenClosedMessage(status.message || '');
+    } catch (err) {
+      console.error('Failed to load kitchen status:', err);
+    }
+  }
+
+  async function toggleKitchen(open, message = '') {
+    setKitchenToggling(true);
+    setUpdateError(null);
+    try {
+      const status = await orderAPI.setKitchenStatus(open, message);
+      setKitchenOpen(!!status.open);
+      setKitchenClosedMessage(status.message || '');
+      setShowCloseModal(false);
+    } catch (err) {
+      console.error('Failed to toggle kitchen:', err);
+      setUpdateError(`Failed to update kitchen status: ${err.message}`);
+    } finally {
+      setKitchenToggling(false);
     }
   }
 
@@ -253,6 +291,21 @@ export default function KitchenDisplay() {
             {connected ? 'Live' : reconnectAttempt > 0 ? `Reconnecting (${reconnectAttempt})` : 'Disconnected'}
           </div>
 
+          {/* Kitchen Open/Closed Toggle */}
+          <button
+            onClick={() => kitchenOpen ? setShowCloseModal(true) : toggleKitchen(true)}
+            disabled={kitchenToggling}
+            title={kitchenOpen ? 'Close ordering — customers can\'t place new orders' : 'Re-open ordering'}
+            className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+              kitchenOpen
+                ? 'bg-green-500/20 text-green-300 hover:bg-green-500/30'
+                : 'bg-red-500/30 text-red-200 hover:bg-red-500/40 ring-1 ring-red-400/50'
+            }`}
+          >
+            {kitchenOpen ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+            {kitchenOpen ? 'Ordering Open' : 'Ordering Closed'}
+          </button>
+
           {/* Sound Toggle */}
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
@@ -284,6 +337,78 @@ export default function KitchenDisplay() {
           </button>
         </div>
       </header>
+
+      {/* Closed Banner */}
+      {!kitchenOpen && (
+        <div className="bg-red-600 text-white px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Lock className="w-5 h-5" />
+            <div>
+              <p className="font-semibold">Online ordering is closed</p>
+              <p className="text-sm text-red-100">
+                {kitchenClosedMessage || 'Customers cannot place new orders right now. Existing orders can still be processed.'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => toggleKitchen(true)}
+            disabled={kitchenToggling}
+            className="px-4 py-2 rounded-lg bg-white text-red-600 font-semibold hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {kitchenToggling ? 'Opening...' : 'Re-open ordering'}
+          </button>
+        </div>
+      )}
+
+      {/* Close Kitchen Confirmation Modal */}
+      {showCloseModal && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+          <div className="bg-gray-800 rounded-2xl max-w-md w-full p-6 border border-white/10">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-red-500/20">
+                <Lock className="w-6 h-6 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold">Close online ordering?</h3>
+                <p className="text-sm text-white/70 mt-1">
+                  Customers won't be able to place new orders until you re-open. Orders already in the queue keep flowing.
+                </p>
+              </div>
+            </div>
+
+            <label className="block text-sm font-medium text-white/80 mb-2 mt-4">
+              Message for customers (optional)
+            </label>
+            <textarea
+              value={closeMessageDraft}
+              onChange={(e) => setCloseMessageDraft(e.target.value.slice(0, 200))}
+              placeholder="e.g. We're catching up on orders — back in 15 min!"
+              className="w-full p-3 rounded-lg bg-gray-900 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-red-500"
+              rows={3}
+              maxLength={200}
+            />
+            <p className="text-xs text-white/40 mt-1">{closeMessageDraft.length}/200</p>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => { setShowCloseModal(false); setCloseMessageDraft(''); }}
+                className="flex-1 py-2.5 rounded-lg bg-white/10 hover:bg-white/15 transition-colors"
+                disabled={kitchenToggling}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => toggleKitchen(false, closeMessageDraft)}
+                disabled={kitchenToggling}
+                className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {kitchenToggling ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                Close ordering
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Orders Grid */}
       <main className="p-6">

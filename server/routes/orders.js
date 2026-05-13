@@ -11,6 +11,13 @@ const router = express.Router();
 // Create new order - with rate limiting and validation
 router.post('/', orderRateLimit, (req, res) => {
   try {
+    // Step 0: Refuse new orders if the kitchen is closed
+    if (db.getSetting('kitchen_open') === 'false') {
+      const message = db.getSetting('kitchen_closed_message')
+        || 'Online ordering is temporarily paused. Please try again soon.';
+      return res.status(503).json({ message, kitchenClosed: true });
+    }
+
     // Step 1: Validate input structure with Zod
     const validation = validateOrderCreation(req.body);
     if (!validation.success) {
@@ -160,6 +167,48 @@ router.post('/', orderRateLimit, (req, res) => {
   } catch (err) {
     console.error('Error creating order:', err);
     res.status(500).json({ message: 'Failed to create order' });
+  }
+});
+
+// Get kitchen open/closed status (kitchen staff)
+router.get('/kitchen-status', requireAuth, (req, res) => {
+  try {
+    const open = db.getSetting('kitchen_open') !== 'false';
+    const message = db.getSetting('kitchen_closed_message') || '';
+    res.json({ open, message });
+  } catch (err) {
+    console.error('Error getting kitchen status:', err);
+    res.status(500).json({ message: 'Failed to load kitchen status' });
+  }
+});
+
+// Toggle kitchen open/closed (kitchen staff)
+router.patch('/kitchen-status', requireAuth, (req, res) => {
+  try {
+    const { open, message } = req.body || {};
+    if (typeof open !== 'boolean') {
+      return res.status(400).json({ message: '`open` must be a boolean' });
+    }
+    db.setSetting('kitchen_open', open ? 'true' : 'false');
+    if (typeof message === 'string') {
+      // Cap to 200 chars to keep banners readable
+      db.setSetting('kitchen_closed_message', message.slice(0, 200));
+    }
+    const status = {
+      open,
+      message: open ? '' : (db.getSetting('kitchen_closed_message') || ''),
+    };
+
+    const io = req.app.get('io');
+    if (io) {
+      console.log(`📤 Emitting kitchen-status: ${open ? 'OPEN' : 'CLOSED'}`);
+      io.emit('kitchen-status', status);
+    }
+
+    res.json({ message: 'Kitchen status updated', ...status });
+  } catch (err) {
+    console.error('Error setting kitchen status:', err);
+    res.status(500).json({ message: 'Failed to update kitchen status' });
   }
 });
 

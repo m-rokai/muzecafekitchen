@@ -1,10 +1,21 @@
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 
-// Initialize Resend with API key from environment
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+// Initialize Gmail SMTP transporter using a Workspace mailbox app password.
+// No DNS changes needed — Workspace already signs muzeoffice.com mail with SPF + DKIM.
+const transporter = process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD
+  ? nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD,
+      },
+    })
+  : null;
 
 // Email configuration
-const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
+const FROM_NAME = process.env.GMAIL_FROM_NAME || process.env.CAFE_NAME || 'Muze Cafe';
+const FROM_ADDRESS = process.env.GMAIL_USER;
+const FROM_EMAIL = FROM_ADDRESS ? `"${FROM_NAME}" <${FROM_ADDRESS}>` : null;
 const CAFE_NAME = process.env.CAFE_NAME || 'Muze Office';
 
 // Muze Office Brand Colors
@@ -21,7 +32,7 @@ const COLORS = {
  * Check if email service is configured
  */
 export function isEmailConfigured() {
-  return !!resend;
+  return !!transporter;
 }
 
 /**
@@ -210,7 +221,7 @@ function generateReadyEmail(order) {
  * @returns {Promise<Object>} Result with success status
  */
 export async function sendOrderConfirmation(order) {
-  if (!resend) {
+  if (!transporter) {
     console.log('Email service not configured - skipping order confirmation email');
     return { success: false, reason: 'not_configured' };
   }
@@ -221,20 +232,15 @@ export async function sendOrderConfirmation(order) {
   }
 
   try {
-    const { data, error } = await resend.emails.send({
+    const info = await transporter.sendMail({
       from: FROM_EMAIL,
       to: order.email,
       subject: `Order #${formatPickupNumber(order.pickup_number)} Confirmed ☕ ${CAFE_NAME}`,
       html: generateConfirmationEmail(order),
     });
 
-    if (error) {
-      console.error('Failed to send confirmation email:', error);
-      return { success: false, error: error.message };
-    }
-
     console.log(`Confirmation email sent to ${order.email} for order #${order.pickup_number}`);
-    return { success: true, emailId: data?.id };
+    return { success: true, emailId: info.messageId };
   } catch (err) {
     console.error('Error sending confirmation email:', err);
     return { success: false, error: err.message };
@@ -247,7 +253,7 @@ export async function sendOrderConfirmation(order) {
  * @returns {Promise<Object>} Result with success status
  */
 export async function sendOrderReadyNotification(order) {
-  if (!resend) {
+  if (!transporter) {
     console.log('Email service not configured - skipping ready notification email');
     return { success: false, reason: 'not_configured' };
   }
@@ -258,20 +264,15 @@ export async function sendOrderReadyNotification(order) {
   }
 
   try {
-    const { data, error } = await resend.emails.send({
+    const info = await transporter.sendMail({
       from: FROM_EMAIL,
       to: order.email,
       subject: `Your Order #${formatPickupNumber(order.pickup_number)} is Ready! 🎉 ${CAFE_NAME}`,
       html: generateReadyEmail(order),
     });
 
-    if (error) {
-      console.error('Failed to send ready notification email:', error);
-      return { success: false, error: error.message };
-    }
-
     console.log(`Ready notification email sent to ${order.email} for order #${order.pickup_number}`);
-    return { success: true, emailId: data?.id };
+    return { success: true, emailId: info.messageId };
   } catch (err) {
     console.error('Error sending ready notification email:', err);
     return { success: false, error: err.message };

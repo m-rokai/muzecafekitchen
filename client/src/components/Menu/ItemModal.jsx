@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { X, Minus, Plus, Coffee, Check } from 'lucide-react';
+import { X, Minus, Plus, Check } from 'lucide-react';
 import { menuAPI } from '../../utils/api';
 import { useCart } from '../../context/CartContext';
 import { formatPriceFromDollars } from '../../utils/formatters';
+import { getCategoryStyle } from './categoryIcons';
 
 export default function ItemModal({ item, onClose }) {
   const { addItem } = useCart();
@@ -11,6 +12,8 @@ export default function ItemModal({ item, onClose }) {
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [modifierGroups, setModifierGroups] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const { Icon, tint } = getCategoryStyle(item.category_name || '', item.name || '');
 
   useEffect(() => {
     loadModifiers();
@@ -30,25 +33,13 @@ export default function ItemModal({ item, onClose }) {
   const toggleModifier = (modifier, group) => {
     setSelectedModifiers(prev => {
       const isSelected = prev.some(m => m.id === modifier.id);
-
-      if (isSelected) {
-        return prev.filter(m => m.id !== modifier.id);
-      } else {
-        // Check max selections
-        const groupModifiers = prev.filter(m =>
-          group.options?.some(opt => opt.id === m.id)
-        );
-
-        if (group.max_selections && groupModifiers.length >= group.max_selections) {
-          // Remove oldest selection from this group
-          const oldestInGroup = prev.find(m =>
-            group.options?.some(opt => opt.id === m.id)
-          );
-          return [...prev.filter(m => m.id !== oldestInGroup?.id), modifier];
-        }
-
-        return [...prev, modifier];
+      if (isSelected) return prev.filter(m => m.id !== modifier.id);
+      const groupModifiers = prev.filter(m => group.options?.some(opt => opt.id === m.id));
+      if (group.max_selections && groupModifiers.length >= group.max_selections) {
+        const oldestInGroup = prev.find(m => group.options?.some(opt => opt.id === m.id));
+        return [...prev.filter(m => m.id !== oldestInGroup?.id), modifier];
       }
+      return [...prev, modifier];
     });
   };
 
@@ -56,7 +47,7 @@ export default function ItemModal({ item, onClose }) {
     const basePrice = item.price * quantity;
     const modifiersPrice = selectedModifiers.reduce(
       (sum, mod) => sum + (mod.price_adjustment || 0),
-      0
+      0,
     ) * quantity;
     return basePrice + modifiersPrice;
   };
@@ -77,52 +68,50 @@ export default function ItemModal({ item, onClose }) {
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        className="absolute inset-0 bg-muze-dark/40 backdrop-blur-md animate-fade-in"
         onClick={onClose}
       />
 
-      {/* Modal */}
-      <div className="relative bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-hidden animate-slide-up">
-        {/* Header Image */}
-        <div className="relative h-48 bg-muze-gold/10 flex items-center justify-center">
+      {/* Modal Panel */}
+      <div className="relative bg-white/95 backdrop-blur-xl backdrop-saturate-150 w-full sm:max-w-lg sm:rounded-3xl rounded-t-3xl max-h-[92vh] overflow-hidden animate-slide-up shadow-2xl border border-white/60">
+        {/* Header Visual */}
+        <div className={`relative h-56 bg-gradient-to-br ${tint} flex items-center justify-center overflow-hidden`}>
           {item.image_url ? (
-            <img
-              src={item.image_url}
-              alt={item.name}
-              className="w-full h-full object-cover"
-            />
+            <img src={item.image_url} alt={item.name} className="w-full h-full object-cover" />
           ) : (
-            <Coffee className="w-16 h-16 text-muze-gold/40" />
+            <Icon className="w-24 h-24 text-muze-dark/30" strokeWidth={1.2} />
           )}
           <button
             onClick={onClose}
-            className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/90 flex items-center justify-center hover:bg-white transition-colors"
+            className="absolute top-4 right-4 w-11 h-11 rounded-full bg-white/90 backdrop-blur flex items-center justify-center hover:bg-white transition-colors shadow-md"
+            aria-label="Close"
           >
             <X className="w-5 h-5 text-muze-dark" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-6 overflow-y-auto max-h-[calc(90vh-12rem-5rem)]">
-          <h2 className="text-2xl font-bold text-muze-dark">{item.name}</h2>
+        <div className="p-6 sm:p-7 overflow-y-auto max-h-[calc(92vh-14rem-6rem)]">
+          <h2 className="text-3xl font-bold text-muze-dark leading-tight">{item.name}</h2>
           {item.description && (
-            <p className="text-muze-brown/70 mt-2">{item.description}</p>
+            <p className="text-muze-dark/70 mt-2 text-base leading-relaxed">{item.description}</p>
           )}
-          <p className="text-xl font-semibold text-muze-brown mt-2">
+          <p className="text-2xl font-bold text-muze-brown mt-3">
             {formatPriceFromDollars(item.price)}
           </p>
 
-          {/* Modifier Groups */}
           {!loading && modifierGroups.length > 0 && (
-            <div className="mt-6 space-y-6">
+            <div className="mt-7 space-y-7">
               {modifierGroups.map(group => (
                 <div key={group.id}>
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-semibold text-muze-dark">
+                    <h3 className="font-bold text-muze-dark text-lg">
                       {group.display_name || group.name}
                     </h3>
-                    {group.required && (
-                      <span className="text-xs text-muze-brown font-medium">Required</span>
+                    {group.required ? (
+                      <span className="text-xs text-muze-brown font-bold uppercase tracking-wider">Required</span>
+                    ) : (
+                      <span className="text-xs text-muze-dark/40">Optional</span>
                     )}
                   </div>
                   <div className="space-y-2">
@@ -132,24 +121,24 @@ export default function ItemModal({ item, onClose }) {
                         <button
                           key={option.id}
                           onClick={() => toggleModifier(option, group)}
-                          className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all ${
+                          className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left ${
                             isSelected
                               ? 'border-muze-gold bg-muze-gold/10'
-                              : 'border-gray-200 hover:border-muze-gold/50'
+                              : 'border-gray-200 hover:border-muze-gold/50 bg-white'
                           }`}
                         >
                           <span className="flex items-center gap-3">
-                            <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                            <span className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${
                               isSelected ? 'border-muze-gold bg-muze-gold' : 'border-gray-300'
                             }`}>
-                              {isSelected && <Check className="w-3 h-3 text-muze-dark" />}
+                              {isSelected && <Check className="w-4 h-4 text-muze-dark" strokeWidth={3} />}
                             </span>
                             <span className="font-medium text-muze-dark">
                               {option.display_name || option.name.replace(/^\$/, '').replace(/^No /, '')}
                             </span>
                           </span>
                           {option.price_adjustment > 0 && (
-                            <span className="text-muze-brown">
+                            <span className="text-muze-brown font-semibold">
                               +{formatPriceFromDollars(option.price_adjustment)}
                             </span>
                           )}
@@ -163,32 +152,34 @@ export default function ItemModal({ item, onClose }) {
           )}
 
           {/* Special Instructions */}
-          <div className="mt-6">
-            <h3 className="font-semibold text-muze-dark mb-3">Special Instructions</h3>
+          <div className="mt-7">
+            <h3 className="font-bold text-muze-dark text-lg mb-3">Special Instructions</h3>
             <textarea
               value={specialInstructions}
               onChange={(e) => setSpecialInstructions(e.target.value)}
               placeholder="Any allergies or special requests?"
-              className="input resize-none h-24"
+              className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-muze-gold focus:outline-none transition-colors resize-none h-24 text-base"
             />
           </div>
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-muze-gold/20 bg-white">
-          <div className="flex items-center gap-4">
+        <div className="p-4 sm:p-5 border-t border-muze-gold/20 bg-white">
+          <div className="flex items-center gap-3">
             {/* Quantity */}
-            <div className="flex items-center gap-3 bg-muze-cream rounded-lg p-1">
+            <div className="flex items-center gap-2 bg-muze-cream rounded-2xl p-1.5">
               <button
                 onClick={() => setQuantity(q => Math.max(1, q - 1))}
-                className="w-10 h-10 rounded-lg bg-white flex items-center justify-center hover:bg-muze-gold/10 transition-colors"
+                className="w-11 h-11 rounded-xl bg-white flex items-center justify-center hover:bg-muze-gold/10 transition-colors shadow-sm"
+                aria-label="Decrease quantity"
               >
                 <Minus className="w-4 h-4 text-muze-dark" />
               </button>
-              <span className="w-8 text-center font-semibold text-muze-dark">{quantity}</span>
+              <span className="w-8 text-center font-bold text-muze-dark text-lg">{quantity}</span>
               <button
                 onClick={() => setQuantity(q => q + 1)}
-                className="w-10 h-10 rounded-lg bg-white flex items-center justify-center hover:bg-muze-gold/10 transition-colors"
+                className="w-11 h-11 rounded-xl bg-white flex items-center justify-center hover:bg-muze-gold/10 transition-colors shadow-sm"
+                aria-label="Increase quantity"
               >
                 <Plus className="w-4 h-4 text-muze-dark" />
               </button>
@@ -197,9 +188,9 @@ export default function ItemModal({ item, onClose }) {
             {/* Add to Cart */}
             <button
               onClick={handleAddToCart}
-              className="flex-1 btn btn-primary py-4"
+              className="flex-1 py-4 px-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-base sm:text-lg hover:bg-muze-brown hover:text-white transition-colors shadow-md flex items-center justify-center gap-2"
             >
-              Add to Cart - {formatPriceFromDollars(calculateTotal())}
+              Add to Cart · {formatPriceFromDollars(calculateTotal())}
             </button>
           </div>
         </div>

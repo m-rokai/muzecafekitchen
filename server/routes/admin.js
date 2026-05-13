@@ -1,4 +1,8 @@
 import express from 'express';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import * as db from '../db/database.js';
 import { generateToken, requireAuth } from '../middleware/auth.js';
 import { pinRateLimit, adminRateLimit } from '../middleware/rateLimit.js';
@@ -12,6 +16,50 @@ import {
 } from '../validators/schemas.js';
 import { sanitizeName, sanitizeText, sanitizeMenuItemName } from '../utils/sanitize.js';
 import { createBackup, listBackups, restoreBackup, deleteBackup, deleteOldBackups, getBackupInfo } from '../services/backup.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Configure uploads directory
+const uploadsDir = process.env.NODE_ENV === 'production'
+  ? '/data/uploads'
+  : path.join(__dirname, '../uploads');
+
+// Ensure uploads directory exists
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Multer configuration for image uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    // Generate unique filename with timestamp
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `menu-${uniqueSuffix}${ext}`);
+  },
+});
+
+const fileFilter = (req, file, cb) => {
+  // Accept only image files
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only JPEG, PNG, GIF, and WebP images are allowed'), false);
+  }
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB max
+  },
+});
 
 const router = express.Router();
 
@@ -77,9 +125,87 @@ router.get('/public/announcement', (req, res) => {
   }
 });
 
+// Public kitchen open/closed status (used by menu + checkout pages)
+router.get('/public/kitchen-status', (req, res) => {
+  try {
+    const open = db.getSetting('kitchen_open') !== 'false';
+    const message = db.getSetting('kitchen_closed_message') || '';
+    res.json({ open, message: open ? '' : message });
+  } catch (err) {
+    console.error('Error getting kitchen status:', err);
+    res.status(500).json({ message: 'Failed to load kitchen status' });
+  }
+});
+
+// Public "Most Popular" rail — resolves the popular_item_ids setting
+// (comma-separated) into full menu_item rows in the configured order.
+// Items that are missing or unavailable are silently filtered out so the
+// rail never shows broken entries.
+router.get('/public/popular-items', (req, res) => {
+  try {
+    const raw = db.getSetting('popular_item_ids') || '';
+    const ids = raw
+      .split(',')
+      .map(s => parseInt(s.trim(), 10))
+      .filter(n => Number.isInteger(n) && n > 0);
+    if (ids.length === 0) return res.json([]);
+
+    const items = ids
+      .map(id => db.getMenuItem(id))
+      .filter(item => item && item.available !== 0);
+
+    res.json(items);
+  } catch (err) {
+    console.error('Error getting popular items:', err);
+    res.status(500).json({ message: 'Failed to load popular items' });
+  }
+});
+
 // ============ All routes below require authentication ============
 router.use(requireAuth);
 router.use(adminRateLimit);
+
+// ============ Image Upload ============
+router.post('/upload', upload.single('image'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file provided' });
+    }
+    // Return the URL path to the uploaded file
+    const imageUrl = `/uploads/${req.file.filename}`;
+    res.status(201).json({ url: imageUrl, filename: req.file.filename });
+  } catch (err) {
+    console.error('Error uploading image:', err);
+    res.status(500).json({ message: 'Failed to upload image' });
+  }
+});
+
+// Delete an uploaded image
+router.delete('/upload/:filename', (req, res) => {
+  try {
+    const { filename } = req.params;
+
+    // Sanitize filename to prevent directory traversal
+    const sanitizedFilename = path.basename(filename);
+    if (sanitizedFilename !== filename || filename.includes('..')) {
+      return res.status(400).json({ message: 'Invalid filename' });
+    }
+
+    const filePath = path.join(uploadsDir, sanitizedFilename);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ message: 'Image not found' });
+    }
+
+    // Delete the file
+    fs.unlinkSync(filePath);
+    res.json({ message: 'Image deleted', filename: sanitizedFilename });
+  } catch (err) {
+    console.error('Error deleting image:', err);
+    res.status(500).json({ message: 'Failed to delete image' });
+  }
+});
 
 // Get admin stats
 router.get('/stats', (req, res) => {
@@ -94,6 +220,58 @@ router.get('/stats', (req, res) => {
   } catch (err) {
     console.error('Error getting stats:', err);
     res.status(500).json({ message: 'Failed to load stats' });
+  }
+});
+
+// ============ Order History ============
+router.get('/orders', (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      status = null,
+      startDate = null,
+      endDate = null,
+      search = null,
+    } = req.query;
+
+    const result = db.getOrderHistory({
+      page: parseInt(page),
+      limit: Math.min(parseInt(limit), 100), // Cap at 100
+      status: status || null,
+      startDate: startDate || null,
+      endDate: endDate || null,
+      search: search || null,
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('Error getting order history:', err);
+    res.status(500).json({ message: 'Failed to load order history' });
+  }
+});
+
+router.get('/orders/stats', (req, res) => {
+  try {
+    const { startDate = null, endDate = null } = req.query;
+    const stats = db.getOrderStats(startDate, endDate);
+    res.json(stats);
+  } catch (err) {
+    console.error('Error getting order stats:', err);
+    res.status(500).json({ message: 'Failed to load order stats' });
+  }
+});
+
+router.get('/orders/:id', (req, res) => {
+  try {
+    const order = db.getOrder(parseInt(req.params.id));
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+    res.json(order);
+  } catch (err) {
+    console.error('Error getting order:', err);
+    res.status(500).json({ message: 'Failed to load order' });
   }
 });
 
@@ -202,7 +380,7 @@ router.post('/items', (req, res) => {
       return res.status(400).json({ message: 'Invalid item data', errors: validation.errors });
     }
 
-    const { name, description, price, category_id, available, sort_order, modifier_group_ids } = validation.data;
+    const { name, description, price, category_id, available, sort_order, modifier_group_ids, image_url } = validation.data;
     const sanitizedName = sanitizeMenuItemName(name);
     const sanitizedDesc = sanitizeText(description);
 
@@ -213,6 +391,7 @@ router.post('/items', (req, res) => {
       category_id: category_id || null,
       available: available !== undefined ? (available ? 1 : 0) : 1,
       sort_order: sort_order || 0,
+      image_url: image_url || null,
     });
     // Link modifier groups if provided
     if (modifier_group_ids && modifier_group_ids.length > 0) {
@@ -228,8 +407,8 @@ router.post('/items', (req, res) => {
 router.put('/items/:id', (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { name, description, price, category_id, available, sort_order, modifier_group_ids } = req.body;
-    db.updateMenuItem(id, { name, description, price, category_id, available, sort_order });
+    const { name, description, price, category_id, available, sort_order, modifier_group_ids, image_url } = req.body;
+    db.updateMenuItem(id, { name, description, price, category_id, available, sort_order, image_url });
     // Update modifier group links if provided
     if (modifier_group_ids !== undefined) {
       db.setItemModifierGroups(id, modifier_group_ids);
@@ -256,6 +435,18 @@ router.patch('/items/:id/availability', (req, res) => {
 router.delete('/items/:id', (req, res) => {
   try {
     const id = parseInt(req.params.id);
+
+    // Get the item first to check for image
+    const item = db.getMenuItem(id);
+    if (item && item.image_url) {
+      // Extract filename from URL and delete the file
+      const filename = path.basename(item.image_url);
+      const filePath = path.join(uploadsDir, filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+
     db.deleteMenuItem(id);
     res.json({ message: 'Item deleted' });
   } catch (err) {

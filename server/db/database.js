@@ -55,6 +55,36 @@ try {
   console.error('Migration error (announcement):', err);
 }
 
+// Migration: Add kitchen open/closed setting (defaults to open)
+try {
+  const kitchenOpen = db.prepare("SELECT value FROM settings WHERE key = 'kitchen_open'").get();
+  if (!kitchenOpen) {
+    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run('kitchen_open', 'true');
+    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run('kitchen_closed_message', '');
+    console.log('Migration: Added kitchen open/closed setting');
+  }
+} catch (err) {
+  console.error('Migration error (kitchen status):', err);
+}
+
+// Migration: Add popular_item_ids setting — comma-separated menu_item ids in
+// popularity order. Initially seeded from Toast Dec 2025–Apr 2026 product mix.
+try {
+  const popular = db.prepare("SELECT value FROM settings WHERE key = 'popular_item_ids'").get();
+  if (!popular) {
+    // Toast top sellers: 16 Breakfast Burrito, 17 Breakfast Croissant,
+    // 29 Italian Chicken Panini, 30 Turkey Grill, 21 Jamaican Me Crazy.
+    // Toast #6 (French Dip Panini) isn't on the online menu so we ship 5.
+    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(
+      'popular_item_ids',
+      '16,17,29,30,21',
+    );
+    console.log('Migration: Seeded popular_item_ids from Toast data');
+  }
+} catch (err) {
+  console.error('Migration error (popular_item_ids):', err);
+}
+
 // Migration: Seed generated menu image URLs for baseline menu items. Keep any
 // manually uploaded/admin-selected images intact.
 try {
@@ -569,6 +599,99 @@ export function addOrderItemModifier(modifier) {
     VALUES (@order_item_id, @modifier_name, @price_adjustment)
   `);
   return stmt.run(modifier);
+}
+
+export function getOrderHistory({ page = 1, limit = 20, status = null, startDate = null, endDate = null, search = null } = {}) {
+  const offset = (page - 1) * limit;
+  let whereConditions = [];
+  let params = [];
+
+  if (status && status !== 'all') {
+    whereConditions.push('status = ?');
+    params.push(status);
+  }
+
+  if (startDate) {
+    whereConditions.push('date(created_at) >= date(?)');
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    whereConditions.push('date(created_at) <= date(?)');
+    params.push(endDate);
+  }
+
+  if (search) {
+    whereConditions.push('(customer_name LIKE ? OR pickup_number LIKE ? OR email LIKE ?)');
+    const searchPattern = `%${search}%`;
+    params.push(searchPattern, searchPattern, searchPattern);
+  }
+
+  const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+
+  // Get total count
+  const countResult = db.prepare(`SELECT COUNT(*) as total FROM orders ${whereClause}`).get(...params);
+  const total = countResult.total;
+
+  // Get orders
+  const orders = db.prepare(`
+    SELECT * FROM orders
+    ${whereClause}
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, limit, offset);
+
+  // Get items for each order
+  const getItems = db.prepare(`
+    SELECT oi.*,
+      (SELECT GROUP_CONCAT(oim.modifier_name || CASE WHEN oim.price_adjustment > 0 THEN ' (+$' || printf('%.2f', oim.price_adjustment) || ')' ELSE '' END, ', ')
+       FROM order_item_modifiers oim WHERE oim.order_item_id = oi.id) as modifiers
+    FROM order_items oi
+    WHERE oi.order_id = ?
+  `);
+
+  for (const order of orders) {
+    order.items = getItems.all(order.id);
+  }
+
+  return {
+    orders,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+
+export function getOrderStats(startDate = null, endDate = null) {
+  let whereConditions = [];
+  let params = [];
+
+  if (startDate) {
+    whereConditions.push('date(created_at) >= date(?)');
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    whereConditions.push('date(created_at) <= date(?)');
+    params.push(endDate);
+  }
+
+  const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+
+  const stats = db.prepare(`
+    SELECT
+      COUNT(*) as total_orders,
+      COALESCE(SUM(CASE WHEN status != 'cancelled' THEN total ELSE 0 END), 0) as total_revenue,
+      COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_orders,
+      COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled_orders,
+      COUNT(CASE WHEN status IN ('pending', 'preparing', 'ready') THEN 1 END) as active_orders
+    FROM orders ${whereClause}
+  `).get(...params);
+
+  return stats;
 }
 
 // ============ Stats ============

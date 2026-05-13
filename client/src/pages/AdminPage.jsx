@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Plus,
@@ -27,6 +27,14 @@ import {
   Clock,
   HardDrive,
   Megaphone,
+  Receipt,
+  Calendar,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  User,
+  ImageIcon,
 } from 'lucide-react';
 import { adminAPI, menuAPI, isAuthenticated as checkAuth } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
@@ -219,6 +227,17 @@ export default function AdminPage() {
               Modifiers
             </button>
             <button
+              onClick={() => setActiveTab('orders')}
+              className={`px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 ${
+                activeTab === 'orders'
+                  ? 'bg-gray-50 text-muze-dark'
+                  : 'text-white/70 hover:text-white'
+              }`}
+            >
+              <Receipt className="w-4 h-4" />
+              Orders
+            </button>
+            <button
               onClick={() => setActiveTab('settings')}
               className={`px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 ${
                 activeTab === 'settings'
@@ -258,6 +277,9 @@ export default function AdminPage() {
             modifierGroups={modifierGroups}
             onUpdate={loadData}
           />
+        )}
+        {activeTab === 'orders' && (
+          <OrdersSection />
         )}
         {activeTab === 'settings' && (
           <SettingsSection
@@ -445,10 +467,54 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
     category_id: item?.category_id || '',
     available: item?.available !== undefined ? item.available : 1,
     modifier_group_ids: [],
+    image_url: item?.image_url || null,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [loadingModifiers, setLoadingModifiers] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef(null);
+
+  async function handleImageUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setError('Please select a valid image file (JPEG, PNG, GIF, or WebP)');
+      return;
+    }
+
+    // Validate file size (5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Image must be smaller than 5MB');
+      return;
+    }
+
+    setUploadingImage(true);
+    setError(null);
+
+    try {
+      const result = await adminAPI.uploadImage(file);
+      setForm(f => ({ ...f, image_url: result.url }));
+    } catch (err) {
+      setError(err.message || 'Failed to upload image');
+    } finally {
+      setUploadingImage(false);
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }
+
+  function handleRemoveImage() {
+    // If we have an image URL, we could optionally delete it from the server
+    // For now, just clear it from the form - the old image will be orphaned
+    // but this keeps the UX simple
+    setForm(f => ({ ...f, image_url: null }));
+  }
 
   useEffect(() => {
     if (item?.id) {
@@ -491,6 +557,7 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
         category_id: form.category_id || null,
         available: form.available ? 1 : 0,
         modifier_group_ids: form.modifier_group_ids,
+        image_url: form.image_url || null,
       };
 
       if (item?.id) {
@@ -523,6 +590,63 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Image Upload */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Item Image</label>
+            <div className="flex items-start gap-4">
+              {/* Image Preview */}
+              <div className="w-24 h-24 rounded-lg bg-gray-100 flex-shrink-0 flex items-center justify-center overflow-hidden border-2 border-dashed border-gray-300">
+                {form.image_url ? (
+                  <img
+                    src={form.image_url}
+                    alt="Item preview"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <ImageIcon className="w-8 h-8 text-gray-400" />
+                )}
+              </div>
+              {/* Upload Controls */}
+              <div className="flex-1 space-y-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingImage}
+                  className="btn btn-secondary py-2 px-4 text-sm flex items-center gap-2"
+                >
+                  {uploadingImage ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      {form.image_url ? 'Change Image' : 'Upload Image'}
+                    </>
+                  )}
+                </button>
+                {form.image_url && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveImage}
+                    className="text-sm text-red-600 hover:text-red-800"
+                  >
+                    Remove image
+                  </button>
+                )}
+                <p className="text-xs text-gray-500">JPEG, PNG, GIF, or WebP. Max 5MB.</p>
+              </div>
+            </div>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
             <input
@@ -1247,6 +1371,433 @@ function ModifierOptionForm({ option, groupId, onSave, onCancel, inline }) {
         </button>
       </div>
     </form>
+  );
+}
+
+// ============ Orders Section ============
+function OrdersSection() {
+  const [orders, setOrders] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+
+  // Filters
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ total: 0, totalPages: 1 });
+
+  useEffect(() => {
+    loadOrders();
+  }, [page, statusFilter, startDate, endDate]);
+
+  useEffect(() => {
+    loadStats();
+  }, [startDate, endDate]);
+
+  // Debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (page === 1) {
+        loadOrders();
+      } else {
+        setPage(1);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  async function loadOrders() {
+    try {
+      setLoading(true);
+      const result = await adminAPI.getOrders({
+        page,
+        limit: 20,
+        status: statusFilter !== 'all' ? statusFilter : null,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        search: search || null,
+      });
+      setOrders(result.orders || []);
+      setPagination(result.pagination || { total: 0, totalPages: 1 });
+    } catch (err) {
+      console.error('Failed to load orders:', err);
+      setError('Failed to load orders');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadStats() {
+    try {
+      const result = await adminAPI.getOrderStats(startDate || null, endDate || null);
+      setStats(result);
+    } catch (err) {
+      console.error('Failed to load order stats:', err);
+    }
+  }
+
+  function formatDate(dateString) {
+    return new Date(dateString).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  }
+
+  function getStatusBadge(status) {
+    const styles = {
+      pending: 'bg-yellow-100 text-yellow-800',
+      preparing: 'bg-blue-100 text-blue-800',
+      ready: 'bg-green-100 text-green-800',
+      completed: 'bg-gray-100 text-gray-800',
+      cancelled: 'bg-red-100 text-red-800',
+    };
+    return styles[status] || 'bg-gray-100 text-gray-800';
+  }
+
+  function clearFilters() {
+    setSearch('');
+    setStatusFilter('all');
+    setStartDate('');
+    setEndDate('');
+    setPage(1);
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Stats Cards */}
+      {stats && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="card p-4">
+            <p className="text-sm text-gray-600">Total Orders</p>
+            <p className="text-2xl font-bold text-muze-dark">{stats.total_orders}</p>
+          </div>
+          <div className="card p-4">
+            <p className="text-sm text-gray-600">Revenue</p>
+            <p className="text-2xl font-bold text-green-600">{formatPriceFromDollars(stats.total_revenue)}</p>
+          </div>
+          <div className="card p-4">
+            <p className="text-sm text-gray-600">Completed</p>
+            <p className="text-2xl font-bold text-gray-700">{stats.completed_orders}</p>
+          </div>
+          <div className="card p-4">
+            <p className="text-sm text-gray-600">Active</p>
+            <p className="text-2xl font-bold text-blue-600">{stats.active_orders}</p>
+          </div>
+          <div className="card p-4">
+            <p className="text-sm text-gray-600">Cancelled</p>
+            <p className="text-2xl font-bold text-red-600">{stats.cancelled_orders}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="card p-4">
+        <div className="flex flex-wrap gap-4 items-end">
+          {/* Search */}
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Customer name, email, or pickup #"
+                className="input pl-10 w-full"
+              />
+            </div>
+          </div>
+
+          {/* Status Filter */}
+          <div className="w-40">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+              className="input w-full"
+            >
+              <option value="all">All Statuses</option>
+              <option value="pending">Pending</option>
+              <option value="preparing">Preparing</option>
+              <option value="ready">Ready</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+
+          {/* Date Range */}
+          <div className="w-40">
+            <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
+              className="input w-full"
+            />
+          </div>
+          <div className="w-40">
+            <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
+              className="input w-full"
+            />
+          </div>
+
+          {/* Clear Filters */}
+          <button
+            onClick={clearFilters}
+            className="btn btn-secondary py-2 px-4"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+
+      {/* Orders Table */}
+      <div className="card overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <RefreshCw className="w-6 h-6 animate-spin text-muze-gold" />
+          </div>
+        ) : error ? (
+          <div className="p-6 text-center text-red-600">{error}</div>
+        ) : orders.length === 0 ? (
+          <div className="p-12 text-center">
+            <Receipt className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500">No orders found</p>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Pickup #</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Customer</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Items</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Total</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Status</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Date</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {orders.map((order) => (
+                    <tr key={order.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3">
+                        <span className="font-bold text-muze-dark">#{String(order.pickup_number).padStart(3, '0')}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div>
+                          <p className="font-medium text-gray-900">{order.customer_name}</p>
+                          {order.email && (
+                            <p className="text-sm text-gray-500">{order.email}</p>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-gray-600">{order.items?.length || 0} items</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="font-medium">{formatPriceFromDollars(order.total)}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${getStatusBadge(order.status)}`}>
+                          {order.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-600">
+                        {formatDate(order.created_at)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => setSelectedOrder(order)}
+                          className="p-2 text-muze-accent hover:bg-muze-accent/10 rounded-lg transition-colors"
+                          title="View Details"
+                        >
+                          <FileText className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            <div className="px-4 py-3 bg-gray-50 border-t flex items-center justify-between">
+              <p className="text-sm text-gray-600">
+                Showing {((page - 1) * 20) + 1} to {Math.min(page * 20, pagination.total)} of {pagination.total} orders
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <span className="text-sm text-gray-600">
+                  Page {page} of {pagination.totalPages}
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))}
+                  disabled={page === pagination.totalPages}
+                  className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Order Detail Modal */}
+      {selectedOrder && (
+        <OrderDetailModal
+          order={selectedOrder}
+          onClose={() => setSelectedOrder(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Order Detail Modal
+function OrderDetailModal({ order, onClose }) {
+  function formatDate(dateString) {
+    return new Date(dateString).toLocaleString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  }
+
+  function getStatusBadge(status) {
+    const styles = {
+      pending: 'bg-yellow-100 text-yellow-800',
+      preparing: 'bg-blue-100 text-blue-800',
+      ready: 'bg-green-100 text-green-800',
+      completed: 'bg-gray-100 text-gray-800',
+      cancelled: 'bg-red-100 text-red-800',
+    };
+    return styles[status] || 'bg-gray-100 text-gray-800';
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-hidden">
+        {/* Header */}
+        <div className="bg-muze-dark text-white p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Receipt className="w-6 h-6" />
+            <div>
+              <h2 className="text-lg font-bold">Order #{String(order.pickup_number).padStart(3, '0')}</h2>
+              <p className="text-white/70 text-sm">{formatDate(order.created_at)}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 overflow-y-auto max-h-[60vh]">
+          {/* Customer Info */}
+          <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <User className="w-4 h-4 text-gray-500" />
+              <span className="font-medium">{order.customer_name}</span>
+            </div>
+            {order.email && (
+              <p className="text-sm text-gray-600 ml-6">{order.email}</p>
+            )}
+          </div>
+
+          {/* Status */}
+          <div className="mb-4 flex items-center gap-2">
+            <span className="text-sm text-gray-600">Status:</span>
+            <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${getStatusBadge(order.status)}`}>
+              {order.status}
+            </span>
+          </div>
+
+          {/* Order Items */}
+          <div className="mb-4">
+            <h3 className="font-medium text-gray-900 mb-2">Items</h3>
+            <div className="space-y-2">
+              {order.items?.map((item, idx) => (
+                <div key={idx} className="flex justify-between items-start p-2 bg-gray-50 rounded">
+                  <div className="flex-1">
+                    <p className="font-medium">
+                      {item.quantity}x {item.item_name}
+                    </p>
+                    {item.modifiers && (
+                      <p className="text-sm text-gray-600">{item.modifiers}</p>
+                    )}
+                    {item.special_instructions && (
+                      <p className="text-sm text-muze-accent italic">"{item.special_instructions}"</p>
+                    )}
+                  </div>
+                  <span className="font-medium">{formatPriceFromDollars(item.total_price)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Order Notes */}
+          {order.notes && (
+            <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+              <p className="text-sm font-medium text-yellow-800">Order Notes:</p>
+              <p className="text-sm text-yellow-700">{order.notes}</p>
+            </div>
+          )}
+
+          {/* Totals */}
+          <div className="border-t pt-3 space-y-1">
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-600">Subtotal</span>
+              <span>{formatPriceFromDollars(order.subtotal)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-600">Tax</span>
+              <span>{formatPriceFromDollars(order.tax)}</span>
+            </div>
+            <div className="flex justify-between font-bold text-lg pt-1 border-t">
+              <span>Total</span>
+              <span>{formatPriceFromDollars(order.total)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t bg-gray-50">
+          <button
+            onClick={onClose}
+            className="w-full btn btn-primary py-2"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

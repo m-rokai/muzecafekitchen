@@ -127,6 +127,13 @@ export const orderAPI = {
     method: 'PATCH',
     body: { status },
   }),
+
+  // Kitchen open/closed (kitchen staff)
+  getKitchenStatus: () => authRequest('/orders/kitchen-status'),
+  setKitchenStatus: (open, message) => authRequest('/orders/kitchen-status', {
+    method: 'PATCH',
+    body: { open, message },
+  }),
 };
 
 // ============ Settings endpoints (public read, protected write) ============
@@ -139,6 +146,14 @@ export const settingsAPI = {
   // Public announcement
   getAnnouncement: () => request('/admin/public/announcement')
     .catch(() => ({ enabled: false, text: '' })),
+
+  // Public kitchen open/closed status — fail open so customers can still order if API hiccups
+  getKitchenStatus: () => request('/admin/public/kitchen-status')
+    .catch(() => ({ open: true, message: '' })),
+
+  // Public "Most Popular" rail (curated list, server-resolved to full items)
+  getPopularItems: () => request('/admin/public/popular-items')
+    .catch(() => []),
 };
 
 // ============ Admin endpoints (all protected except verifyPin) ============
@@ -246,6 +261,19 @@ export const adminAPI = {
     body: { group_ids: groupIds },
   }),
 
+  // Image Upload
+  uploadImage: async (file) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    return authRequest('/admin/upload', {
+      method: 'POST',
+      body: formData,
+    });
+  },
+  deleteImage: (filename) => authRequest(`/admin/upload/${filename}`, {
+    method: 'DELETE',
+  }),
+
   // Backup Management
   getBackupInfo: () => authRequest('/admin/backup/info'),
   getBackups: () => authRequest('/admin/backups'),
@@ -253,6 +281,27 @@ export const adminAPI = {
   restoreBackup: (filename) => authRequest(`/admin/backup/${filename}/restore`, { method: 'POST' }),
   deleteBackup: (filename) => authRequest(`/admin/backup/${filename}`, { method: 'DELETE' }),
   cleanupBackups: (days = 7) => authRequest(`/admin/backups/cleanup?days=${days}`, { method: 'DELETE' }),
+
+  // Order History
+  getOrders: (params = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.page) searchParams.set('page', params.page);
+    if (params.limit) searchParams.set('limit', params.limit);
+    if (params.status) searchParams.set('status', params.status);
+    if (params.startDate) searchParams.set('startDate', params.startDate);
+    if (params.endDate) searchParams.set('endDate', params.endDate);
+    if (params.search) searchParams.set('search', params.search);
+    const query = searchParams.toString();
+    return authRequest(`/admin/orders${query ? `?${query}` : ''}`);
+  },
+  getOrderStats: (startDate, endDate) => {
+    const searchParams = new URLSearchParams();
+    if (startDate) searchParams.set('startDate', startDate);
+    if (endDate) searchParams.set('endDate', endDate);
+    const query = searchParams.toString();
+    return authRequest(`/admin/orders/stats${query ? `?${query}` : ''}`);
+  },
+  getOrder: (id) => authRequest(`/admin/orders/${id}`),
 };
 
 export default { menuAPI, orderAPI, adminAPI, settingsAPI };
