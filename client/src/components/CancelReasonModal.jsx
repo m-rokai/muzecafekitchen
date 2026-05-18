@@ -35,13 +35,22 @@ export default function CancelReasonModal({ audience, pickupNumber, onConfirm, o
   const [other, setOther] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  // Staff: two-step arm/fire pattern so an accidental click doesn't kill an
+  // order. Customers keep one-click since the reason picker already adds
+  // friction and they're cancelling their own order.
+  const [armed, setArmed] = useState(false);
 
   const isOther = selected === 'Other';
   const otherValid = !isOther || other.trim().length > 0;
   const reasonToSend = isOther ? other.trim() : selected;
+  const staff = audience === 'staff';
 
-  async function handleConfirm() {
+  async function handlePrimary() {
     if (submitting || !otherValid) return;
+    if (staff && !armed) {
+      setArmed(true);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -49,10 +58,10 @@ export default function CancelReasonModal({ audience, pickupNumber, onConfirm, o
     } catch (err) {
       setError(err.message || 'Failed to cancel order');
       setSubmitting(false);
+      setArmed(false);
     }
   }
 
-  const staff = audience === 'staff';
   const overlay = staff ? 'bg-black/70' : 'bg-muze-dark/60';
   const card = staff
     ? 'bg-gray-800 border border-white/10 text-white'
@@ -84,7 +93,9 @@ export default function CancelReasonModal({ audience, pickupNumber, onConfirm, o
             </h3>
             <p className={`text-sm mt-1 ${staff ? 'text-white/70' : 'text-muze-dark/70'}`}>
               {staff
-                ? `Pickup #${pickupNumber}. The customer will be notified by email if one was provided.`
+                ? armed
+                  ? `Tap "Confirm cancel" to cancel pickup #${pickupNumber}. This can't be undone.`
+                  : `Pickup #${pickupNumber}. The customer will be notified by email if one was provided.`
                 : `Pickup #${pickupNumber}. You won't be charged. We'll send a confirmation to your email.`}
             </p>
           </div>
@@ -137,19 +148,25 @@ export default function CancelReasonModal({ audience, pickupNumber, onConfirm, o
 
         <div className="flex gap-3 mt-6">
           <button
-            onClick={onClose}
+            onClick={armed ? () => setArmed(false) : onClose}
             disabled={submitting}
             className={`flex-1 py-2.5 rounded-lg font-semibold transition-colors disabled:opacity-50 ${cancelBtn}`}
           >
-            Keep order
+            {armed ? 'Go back' : 'Keep order'}
           </button>
           <button
-            onClick={handleConfirm}
+            onClick={handlePrimary}
             disabled={submitting || !otherValid}
-            className={`flex-1 py-2.5 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${confirmBtn}`}
+            className={`flex-1 py-2.5 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+              armed ? 'bg-red-700 hover:bg-red-800 text-white ring-2 ring-red-300/50' : confirmBtn
+            }`}
           >
             {submitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : null}
-            {submitting ? 'Cancelling…' : 'Cancel order'}
+            {submitting
+              ? 'Cancelling…'
+              : armed
+                ? 'Confirm cancel'
+                : 'Cancel order'}
           </button>
         </div>
       </div>
