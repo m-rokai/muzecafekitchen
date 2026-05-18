@@ -22,6 +22,28 @@ function getMenuImageUrl(itemName) {
   return `/uploads/menu-${slug}.webp`;
 }
 
+const generatedMenuImageItemNames = new Set([
+  ...menuItems.map(item => item.name),
+  'Just Peachy',
+  'Iced Cold Foam Vanilla Latte',
+  'Breakfast Panini',
+  'Breakfast Quesadilla',
+  'Breakfast Sliders',
+  'French Toast Casserole',
+  'Smothered Green Burrito',
+  'Tamale Breakfast',
+  'California Turkey',
+  'Italian Panini',
+  'Roast Beef Panini with Au Jus',
+  'Southwest Quesadilla',
+  'Jalapeno Tuna Melt',
+  'Fresh Fruit',
+  'Hash Brown Patties',
+  'Passion Fruit Boba',
+  'Pasta Salad',
+  'Potato Salad',
+]);
+
 // Initialize database
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
@@ -108,7 +130,6 @@ try {
 // Migration: Seed generated menu image URLs for baseline menu items. Keep any
 // manually uploaded/admin-selected images intact.
 try {
-  const seedItemNames = new Set(menuItems.map(item => item.name));
   const itemsWithoutImages = db.prepare(`
     SELECT id, name
     FROM menu_items
@@ -120,7 +141,7 @@ try {
     let updatedCount = 0;
 
     for (const item of itemsWithoutImages) {
-      if (!seedItemNames.has(item.name)) continue;
+      if (!generatedMenuImageItemNames.has(item.name)) continue;
       updateImage.run(getMenuImageUrl(item.name), item.id);
       updatedCount++;
     }
