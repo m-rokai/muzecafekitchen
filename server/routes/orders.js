@@ -4,7 +4,8 @@ import { requireAuth } from '../middleware/auth.js';
 import { orderRateLimit } from '../middleware/rateLimit.js';
 import { validateOrderCreation, validateOrderStatus } from '../validators/schemas.js';
 import { sanitizeOrderData, sanitizeName, sanitizeText } from '../utils/sanitize.js';
-import { sendOrderConfirmation, sendOrderReadyNotification } from '../services/email.js';
+import { sendOrderConfirmation, sendOrderReadyNotification, sendOrderCancellation } from '../services/email.js';
+import { schedulePickupReminderAfterReady } from '../services/pickupReminder.js';
 
 const router = express.Router();
 
@@ -238,7 +239,9 @@ router.get('/:id', (req, res) => {
   }
 });
 
-// Update order status - requires authentication (kitchen staff only)
+// Update order status - requires authentication (kitchen staff only).
+// Staff-initiated cancellation routes through cancelOrder() so the reason +
+// cancelled_by are persisted; other transitions use updateOrderStatus().
 router.patch('/:id/status', requireAuth, (req, res) => {
   try {
     // Validate status input
@@ -251,12 +254,21 @@ router.patch('/:id/status', requireAuth, (req, res) => {
     }
 
     const { status } = validation.data;
-
+    const reason = typeof req.body.reason === 'string' ? sanitizeText(req.body.reason, 500) : null;
     const orderId = parseInt(req.params.id);
-    db.updateOrderStatus(orderId, status);
 
-    // Get updated order
-    const order = db.getOrder(orderId);
+    let order;
+    if (status === 'cancelled') {
+      const result = db.cancelOrder(orderId, { reason, source: 'staff' });
+      if (!result.ok) {
+        const httpCode = result.code === 'not_found' ? 404 : 409;
+        return res.status(httpCode).json({ message: result.message, code: result.code });
+      }
+      order = result.order;
+    } else {
+      db.updateOrderStatus(orderId, status);
+      order = db.getOrder(orderId);
+    }
 
     // Emit update to all clients
     const io = req.app.get('io');
@@ -264,10 +276,21 @@ router.patch('/:id/status', requireAuth, (req, res) => {
       io.emit('order-updated', order);
     }
 
-    // Send email notification when order is ready
-    if (status === 'ready' && order.email) {
-      sendOrderReadyNotification(order).catch(err => {
-        console.error('Failed to send ready notification email:', err);
+    // Send email notification when order is ready, and arm the 10-minute
+    // pickup reminder. The reminder is a no-op if the order moves to
+    // completed or cancelled before it fires.
+    if (status === 'ready') {
+      if (order.email) {
+        sendOrderReadyNotification(order).catch(err => {
+          console.error('Failed to send ready notification email:', err);
+        });
+      }
+      schedulePickupReminderAfterReady(orderId, req.app.get('io'));
+    }
+
+    if (status === 'cancelled' && order.email) {
+      sendOrderCancellation(order).catch(err => {
+        console.error('Failed to send cancellation email:', err);
       });
     }
 
@@ -275,6 +298,55 @@ router.patch('/:id/status', requireAuth, (req, res) => {
   } catch (err) {
     console.error('Error updating status:', err);
     res.status(500).json({ message: 'Failed to update status' });
+  }
+});
+
+// Customer-initiated cancellation. Public route — bearer credential is
+// possession of the order id (same trust model as GET /orders/:id). Only
+// permitted while status is 'pending'; once the kitchen starts the order
+// the customer is told to come to the counter.
+router.patch('/:id/cancel', (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ message: 'Invalid order id' });
+    }
+
+    const reason = typeof req.body?.reason === 'string'
+      ? sanitizeText(req.body.reason, 500)
+      : null;
+
+    const result = db.cancelOrder(orderId, { reason, source: 'customer' });
+    if (!result.ok) {
+      const httpCode = result.code === 'not_found' ? 404
+        : result.code === 'too_late' ? 409
+        : result.code === 'final_state' ? 409
+        : 400;
+      return res.status(httpCode).json({
+        message: result.message,
+        code: result.code,
+        order: result.order,
+      });
+    }
+
+    const order = result.order;
+
+    const io = req.app.get('io');
+    if (io) {
+      console.log('📤 Customer cancelled order', order.id);
+      io.emit('order-updated', order);
+    }
+
+    if (order.email) {
+      sendOrderCancellation(order).catch(err => {
+        console.error('Failed to send cancellation email:', err);
+      });
+    }
+
+    res.json({ message: 'Order cancelled', order });
+  } catch (err) {
+    console.error('Error cancelling order:', err);
+    res.status(500).json({ message: 'Failed to cancel order' });
   }
 });
 

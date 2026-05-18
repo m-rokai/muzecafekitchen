@@ -1770,6 +1770,18 @@ function OrderDetailModal({ order, onClose }) {
             </div>
           )}
 
+          {/* Cancellation Info */}
+          {order.status === 'cancelled' && (
+            <div className="mb-4 p-3 bg-red-50 rounded-lg border border-red-200">
+              <p className="text-sm font-medium text-red-800">
+                Cancelled{order.cancelled_by ? ` by ${order.cancelled_by}` : ''}
+              </p>
+              {order.cancellation_reason && (
+                <p className="text-sm text-red-700 mt-1">Reason: {order.cancellation_reason}</p>
+              )}
+            </div>
+          )}
+
           {/* Totals */}
           <div className="border-t pt-3 space-y-1">
             <div className="flex justify-between text-sm">

@@ -43,6 +43,26 @@ try {
   console.error('Migration error:', err);
 }
 
+// Migration: Add cancellation + pickup-reminder columns to orders table
+try {
+  const columns = db.prepare("PRAGMA table_info(orders)").all();
+  const colNames = new Set(columns.map(col => col.name));
+  if (!colNames.has('cancellation_reason')) {
+    db.prepare('ALTER TABLE orders ADD COLUMN cancellation_reason TEXT').run();
+    console.log('Migration: Added cancellation_reason column to orders');
+  }
+  if (!colNames.has('cancelled_by')) {
+    db.prepare('ALTER TABLE orders ADD COLUMN cancelled_by TEXT').run();
+    console.log('Migration: Added cancelled_by column to orders');
+  }
+  if (!colNames.has('pickup_reminder_sent')) {
+    db.prepare('ALTER TABLE orders ADD COLUMN pickup_reminder_sent INTEGER DEFAULT 0').run();
+    console.log('Migration: Added pickup_reminder_sent column to orders');
+  }
+} catch (err) {
+  console.error('Migration error (cancellation/reminder columns):', err);
+}
+
 // Migration: Add announcement settings
 try {
   const announcement = db.prepare("SELECT value FROM settings WHERE key = 'announcement_text'").get();
@@ -582,6 +602,60 @@ export function getActiveOrders() {
 export function updateOrderStatus(id, status) {
   const stmt = db.prepare('UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
   return stmt.run(status, id);
+}
+
+// Cancel an order. Returns { ok: true, order } on success, or
+// { ok: false, code, message, order } when the transition is not allowed.
+// `source` is 'customer' or 'staff'; customers can only cancel while pending,
+// staff may cancel any active order (pending | preparing | ready).
+export function cancelOrder(id, { reason = null, source = 'customer' } = {}) {
+  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+  if (!order) return { ok: false, code: 'not_found', message: 'Order not found' };
+
+  if (order.status === 'cancelled' || order.status === 'completed') {
+    return { ok: false, code: 'final_state', message: `Order is already ${order.status}`, order };
+  }
+
+  if (source === 'customer' && order.status !== 'pending') {
+    return {
+      ok: false,
+      code: 'too_late',
+      message: 'This order is already being prepared. Please come to the counter for help.',
+      order,
+    };
+  }
+
+  const trimmedReason = typeof reason === 'string' ? reason.trim().slice(0, 500) : null;
+
+  db.prepare(`
+    UPDATE orders
+    SET status = 'cancelled',
+        cancellation_reason = ?,
+        cancelled_by = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(trimmedReason || null, source, id);
+
+  return { ok: true, order: getOrder(id) };
+}
+
+// Returns ready-status orders whose 'ready' transition (updated_at) is at least
+// `minutesOld` minutes ago and have not yet received a pickup reminder. Only
+// includes orders with a customer email — others can't be reminded.
+export function getOrdersAwaitingPickupReminder(minutesOld = 10) {
+  return db.prepare(`
+    SELECT id
+    FROM orders
+    WHERE status = 'ready'
+      AND email IS NOT NULL
+      AND email != ''
+      AND pickup_reminder_sent = 0
+      AND updated_at <= datetime('now', ?)
+  `).all(`-${minutesOld} minutes`);
+}
+
+export function markPickupReminderSent(id) {
+  return db.prepare('UPDATE orders SET pickup_reminder_sent = 1 WHERE id = ?').run(id);
 }
 
 export function addOrderItem(orderItem) {
