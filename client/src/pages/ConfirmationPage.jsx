@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
-import { CheckCircle, Clock, Coffee, ArrowLeft, Loader2, WifiOff, Laptop } from 'lucide-react';
+import { CheckCircle, Clock, Coffee, ArrowLeft, Loader2, WifiOff, Laptop, XCircle } from 'lucide-react';
 import { orderAPI } from '../utils/api';
 import { formatPriceFromDollars, formatPickupNumber, formatTime } from '../utils/formatters';
 import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
+import CancelReasonModal from '../components/CancelReasonModal';
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL ||
   (import.meta.env.PROD ? window.location.origin : 'http://localhost:3001');
@@ -18,8 +19,17 @@ export default function ConfirmationPage() {
   const [error, setError] = useState(null);
   const [connected, setConnected] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelNotice, setCancelNotice] = useState(null);
   const socketRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
+
+  async function handleCustomerCancel(reason) {
+    const result = await orderAPI.cancel(orderId, reason);
+    setOrder(result.order);
+    setShowCancelModal(false);
+    localStorage.removeItem('muze_last_order');
+  }
 
   useEffect(() => {
     loadOrder();
@@ -109,6 +119,7 @@ export default function ConfirmationPage() {
     preparing:  { icon: Coffee,      color: 'text-muze-brown', bg: 'bg-muze-brown/20', label: 'Preparing',       description: 'Your order is being prepared.' },
     ready:      { icon: CheckCircle, color: 'text-green-700',  bg: 'bg-green-100',     label: 'Ready for Pickup',description: 'Your order is ready! Come pick it up.' },
     completed:  { icon: CheckCircle, color: 'text-muze-dark/70', bg: 'bg-gray-100',    label: 'Completed',       description: 'Thank you for your order!' },
+    cancelled:  { icon: XCircle,     color: 'text-red-600',    bg: 'bg-red-100',       label: 'Cancelled',       description: 'This order was cancelled. You weren\'t charged.' },
   };
   const status = statusConfig[order.status] || statusConfig.pending;
   const StatusIcon = status.icon;
@@ -168,6 +179,29 @@ export default function ConfirmationPage() {
             )}
           </div>
         </GlassPanel>
+
+        {/* Cancel order — only while still pending */}
+        {order.status === 'pending' && (
+          <div className="mt-4 rounded-2xl bg-white/85 backdrop-blur-sm border border-white/70 shadow-sm p-4 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-muze-dark">Made a mistake?</p>
+              <p className="text-xs text-muze-dark/60">You can cancel until the kitchen starts preparing it.</p>
+            </div>
+            <button
+              onClick={() => setShowCancelModal(true)}
+              className="px-4 py-2 rounded-full border border-red-300 text-red-700 text-sm font-semibold hover:bg-red-50 transition-colors flex-shrink-0"
+            >
+              Cancel order
+            </button>
+          </div>
+        )}
+
+        {/* "Too late" notice if customer tried to cancel after kitchen started */}
+        {cancelNotice && (
+          <div className="mt-4 rounded-2xl bg-yellow-50 border border-yellow-300 p-4 text-sm text-yellow-900">
+            {cancelNotice}
+          </div>
+        )}
 
         {/* Order details — solid card */}
         <div className="rounded-2xl bg-white/85 backdrop-blur-sm border border-white/70 shadow-sm p-6 mt-6">
@@ -250,6 +284,30 @@ export default function ConfirmationPage() {
           Start New Order
         </button>
       </main>
+
+      {showCancelModal && (
+        <CancelReasonModal
+          audience="customer"
+          pickupNumber={formatPickupNumber(order.pickup_number)}
+          onConfirm={async (reason) => {
+            try {
+              await handleCustomerCancel(reason);
+            } catch (err) {
+              // Surface "too late" gracefully — if the kitchen started preparing
+              // between modal open and confirm, refresh the page state so the
+              // cancel UI hides itself and show a soft notice.
+              if (/already being prepared/i.test(err.message)) {
+                setCancelNotice('This order just started being prepared — please come to the counter for help.');
+                setShowCancelModal(false);
+                loadOrder();
+                return;
+              }
+              throw err;
+            }
+          }}
+          onClose={() => setShowCancelModal(false)}
+        />
+      )}
     </div>
   );
 }

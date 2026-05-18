@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS orders (
   tax REAL DEFAULT 0,
   total REAL DEFAULT 0,
   notes TEXT,
+  cancellation_reason TEXT,
+  cancelled_by TEXT CHECK(cancelled_by IN ('customer', 'staff') OR cancelled_by IS NULL),
+  pickup_reminder_sent INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

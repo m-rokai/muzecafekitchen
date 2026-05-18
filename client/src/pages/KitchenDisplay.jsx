@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { Clock, ChefHat, CheckCircle, Bell, Volume2, VolumeX, RefreshCw, LogOut, Lock, Unlock } from 'lucide-react';
+import { Clock, ChefHat, CheckCircle, Bell, Volume2, VolumeX, RefreshCw, LogOut, Lock, Unlock, X } from 'lucide-react';
 import { orderAPI, adminAPI, isAuthenticated as checkAuth } from '../utils/api';
 import { formatPickupNumber, formatTimeSince } from '../utils/formatters';
 import PinEntry from '../components/PinEntry';
+import CancelReasonModal from '../components/CancelReasonModal';
 
 // In production, connect to same origin; in dev, use localhost:3001
 const SOCKET_URL = import.meta.env.VITE_WS_URL ||
@@ -24,6 +25,7 @@ export default function KitchenDisplay() {
   const [kitchenToggling, setKitchenToggling] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeMessageDraft, setCloseMessageDraft] = useState('');
+  const [cancelTarget, setCancelTarget] = useState(null); // order to cancel
   const socketRef = useRef(null);
   const audioRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -251,6 +253,21 @@ export default function KitchenDisplay() {
     }
   }
 
+  async function staffCancelOrder(reason) {
+    if (!cancelTarget) return;
+    setUpdatingOrderId(cancelTarget.id);
+    try {
+      await orderAPI.updateStatus(cancelTarget.id, 'cancelled', reason);
+      setCancelTarget(null);
+    } catch (err) {
+      console.error('Failed to cancel order:', err);
+      setUpdateError(`Failed to cancel order: ${err.message}`);
+      throw err;
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  }
+
   // Sort orders by created_at (oldest first) within each status group
   const sortByTime = (a, b) => new Date(a.created_at) - new Date(b.created_at);
 
@@ -452,6 +469,7 @@ export default function KitchenDisplay() {
                       currentTime={currentTime}
                       onStart={() => updateStatus(order.id, 'preparing')}
                       isUpdating={updatingOrderId === order.id}
+                      onCancel={() => setCancelTarget(order)}
                     />
                   ))}
                 </div>
@@ -473,6 +491,7 @@ export default function KitchenDisplay() {
                       currentTime={currentTime}
                       onComplete={() => updateStatus(order.id, 'ready')}
                       isUpdating={updatingOrderId === order.id}
+                      onCancel={() => setCancelTarget(order)}
                     />
                   ))}
                 </div>
@@ -494,6 +513,7 @@ export default function KitchenDisplay() {
                       currentTime={currentTime}
                       onPickup={() => updateStatus(order.id, 'completed')}
                       isUpdating={updatingOrderId === order.id}
+                      onCancel={() => setCancelTarget(order)}
                     />
                   ))}
                 </div>
@@ -511,11 +531,20 @@ export default function KitchenDisplay() {
           <StatusBadge label="Ready" count={readyOrders.length} color="green" />
         </div>
       </footer>
+
+      {cancelTarget && (
+        <CancelReasonModal
+          audience="staff"
+          pickupNumber={formatPickupNumber(cancelTarget.pickup_number)}
+          onConfirm={staffCancelOrder}
+          onClose={() => setCancelTarget(null)}
+        />
+      )}
     </div>
   );
 }
 
-function OrderCard({ order, currentTime, onStart, onComplete, onPickup, isUpdating }) {
+function OrderCard({ order, currentTime, onStart, onComplete, onPickup, onCancel, isUpdating }) {
   const statusColors = {
     pending: 'border-yellow-500 bg-yellow-500/10',
     preparing: 'border-blue-500 bg-blue-500/10',
@@ -611,6 +640,17 @@ function OrderCard({ order, currentTime, onStart, onComplete, onPickup, isUpdati
             ) : (
               'Order Picked Up'
             )}
+          </button>
+        )}
+
+        {onCancel && (
+          <button
+            onClick={onCancel}
+            disabled={isUpdating}
+            className="mt-2 w-full py-2 rounded-lg text-red-300 hover:bg-red-500/10 hover:text-red-200 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium transition-colors flex items-center justify-center gap-1.5"
+          >
+            <X className="w-4 h-4" />
+            Cancel order
           </button>
         )}
       </div>

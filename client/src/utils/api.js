@@ -121,11 +121,17 @@ export const orderAPI = {
   }),
   get: (id) => request(`/orders/${id}`),
 
+  // Public - customer cancels their own order (server gates to pending status)
+  cancel: (id, reason) => request(`/orders/${id}/cancel`, {
+    method: 'PATCH',
+    body: { reason: reason || null },
+  }),
+
   // Protected - kitchen staff only
   getActive: () => authRequest('/orders/active'),
-  updateStatus: (id, status) => authRequest(`/orders/${id}/status`, {
+  updateStatus: (id, status, reason) => authRequest(`/orders/${id}/status`, {
     method: 'PATCH',
-    body: { status },
+    body: reason ? { status, reason } : { status },
   }),
 
   // Kitchen open/closed (kitchen staff)
