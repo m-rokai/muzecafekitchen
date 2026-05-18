@@ -180,29 +180,6 @@ export default function ConfirmationPage() {
           </div>
         </GlassPanel>
 
-        {/* Cancel order — only while still pending */}
-        {order.status === 'pending' && (
-          <div className="mt-4 rounded-2xl bg-white/85 backdrop-blur-sm border border-white/70 shadow-sm p-4 flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-muze-dark">Made a mistake?</p>
-              <p className="text-xs text-muze-dark/60">You can cancel until the kitchen starts preparing it.</p>
-            </div>
-            <button
-              onClick={() => setShowCancelModal(true)}
-              className="px-4 py-2 rounded-full border border-red-300 text-red-700 text-sm font-semibold hover:bg-red-50 transition-colors flex-shrink-0"
-            >
-              Cancel order
-            </button>
-          </div>
-        )}
-
-        {/* "Too late" notice if customer tried to cancel after kitchen started */}
-        {cancelNotice && (
-          <div className="mt-4 rounded-2xl bg-yellow-50 border border-yellow-300 p-4 text-sm text-yellow-900">
-            {cancelNotice}
-          </div>
-        )}
-
         {/* Order details — solid card */}
         <div className="rounded-2xl bg-white/85 backdrop-blur-sm border border-white/70 shadow-sm p-6 mt-6">
           <div className="flex justify-between items-center mb-4">
@@ -262,6 +239,29 @@ export default function ConfirmationPage() {
             <p className="font-bold text-muze-dark mt-1">Muze Café</p>
           </div>
         </div>
+
+        {/* Cancel order — card-sized button, only while still pending */}
+        {order.status === 'pending' && (
+          <button
+            onClick={() => setShowCancelModal(true)}
+            className="w-full mt-4 rounded-2xl border-2 border-red-300 hover:border-red-500 hover:bg-red-50 transition-colors p-4 flex items-center gap-3 text-left"
+          >
+            <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+              <XCircle className="w-6 h-6 text-red-600" strokeWidth={1.8} />
+            </div>
+            <div className="min-w-0">
+              <p className="font-bold text-red-700">Cancel this order</p>
+              <p className="text-sm text-red-700/70">You can cancel until the kitchen starts preparing it.</p>
+            </div>
+          </button>
+        )}
+
+        {/* "Too late" notice if customer tried to cancel after kitchen started */}
+        {cancelNotice && (
+          <div className="mt-4 rounded-2xl bg-yellow-50 border border-yellow-300 p-4 text-sm text-yellow-900">
+            {cancelNotice}
+          </div>
+        )}
 
         {/* Coworking pass */}
         <div className="rounded-2xl bg-gradient-to-r from-muze-gold/20 to-muze-peach/30 border border-muze-gold/30 p-4 mt-4">
