@@ -125,33 +125,34 @@ export default function AdminPage() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-muze-dark text-white">
-        <div className="max-w-6xl mx-auto px-4 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Settings className="w-8 h-8" />
-              <div>
-                <h1 className="text-2xl font-bold">Admin Dashboard</h1>
-                <p className="text-white/70">Muze Office</p>
+        <div className="max-w-6xl mx-auto px-4 py-4 sm:py-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <Settings className="w-7 h-7 sm:w-8 sm:h-8 flex-shrink-0" />
+              <div className="min-w-0">
+                <h1 className="text-xl sm:text-2xl font-bold leading-tight">Admin Dashboard</h1>
+                <p className="text-white/70 text-sm">Muze Office</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Link
                 to="/"
-                className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                className="px-3 sm:px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-sm sm:text-base"
               >
-                View Menu
+                <span className="hidden xs:inline">View </span>Menu
               </Link>
               <Link
                 to="/kitchen"
-                className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-2"
+                className="px-3 sm:px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-2 text-sm sm:text-base"
               >
                 <ChefHat className="w-4 h-4" />
                 Kitchen
               </Link>
               <button
                 onClick={handleLogout}
-                className="px-4 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 transition-colors flex items-center gap-2"
+                className="px-3 sm:px-4 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 transition-colors flex items-center gap-2"
                 title="Logout"
+                aria-label="Logout"
               >
                 <LogOut className="w-4 h-4" />
               </button>
@@ -159,7 +160,7 @@ export default function AdminPage() {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-3 gap-4 mt-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mt-4 sm:mt-6">
             <div className="bg-white/10 rounded-xl p-4">
               <div className="flex items-center gap-3">
                 <ShoppingBag className="w-8 h-8 text-white/70" />
@@ -191,11 +192,11 @@ export default function AdminPage() {
         </div>
 
         {/* Tabs */}
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="flex gap-1">
+        <div className="max-w-6xl mx-auto px-2 sm:px-4">
+          <div className="flex gap-1 overflow-x-auto -mx-2 px-2 sm:mx-0 sm:px-0">
             <button
               onClick={() => setActiveTab('items')}
-              className={`px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 ${
+              className={`px-4 sm:px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap text-sm sm:text-base ${
                 activeTab === 'items'
                   ? 'bg-gray-50 text-muze-dark'
                   : 'text-white/70 hover:text-white'
@@ -206,7 +207,7 @@ export default function AdminPage() {
             </button>
             <button
               onClick={() => setActiveTab('categories')}
-              className={`px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 ${
+              className={`px-4 sm:px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap text-sm sm:text-base ${
                 activeTab === 'categories'
                   ? 'bg-gray-50 text-muze-dark'
                   : 'text-white/70 hover:text-white'
@@ -217,7 +218,7 @@ export default function AdminPage() {
             </button>
             <button
               onClick={() => setActiveTab('modifiers')}
-              className={`px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 ${
+              className={`px-4 sm:px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap text-sm sm:text-base ${
                 activeTab === 'modifiers'
                   ? 'bg-gray-50 text-muze-dark'
                   : 'text-white/70 hover:text-white'
@@ -228,7 +229,7 @@ export default function AdminPage() {
             </button>
             <button
               onClick={() => setActiveTab('orders')}
-              className={`px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 ${
+              className={`px-4 sm:px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap text-sm sm:text-base ${
                 activeTab === 'orders'
                   ? 'bg-gray-50 text-muze-dark'
                   : 'text-white/70 hover:text-white'
@@ -239,7 +240,7 @@ export default function AdminPage() {
             </button>
             <button
               onClick={() => setActiveTab('settings')}
-              className={`px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 ${
+              className={`px-4 sm:px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap text-sm sm:text-base ${
                 activeTab === 'settings'
                   ? 'bg-gray-50 text-muze-dark'
                   : 'text-white/70 hover:text-white'
@@ -252,7 +253,7 @@ export default function AdminPage() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="max-w-6xl mx-auto px-3 sm:px-4 py-5 sm:py-8">
         {activeTab === 'items' && (
           <ItemsSection
             items={menuItems}
@@ -393,59 +394,64 @@ function ItemsSection({ items, categories, modifierGroups, onUpdate, loading }) 
 
       {/* Items Table */}
       <div className="card overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50 border-b">
-            <tr>
-              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Item</th>
-              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Category</th>
-              <th className="px-4 py-3 text-right text-sm font-semibold text-gray-600">Price</th>
-              <th className="px-4 py-3 text-center text-sm font-semibold text-gray-600">Available</th>
-              <th className="px-4 py-3 text-center text-sm font-semibold text-gray-600">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {filteredItems.map(item => (
-              <tr key={item.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3">
-                  <p className="font-medium text-gray-900">{item.name}</p>
-                  {item.description && (
-                    <p className="text-sm text-gray-500 truncate max-w-xs">{item.description}</p>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-gray-600">{item.category_name || 'Uncategorized'}</td>
-                <td className="px-4 py-3 text-right font-medium">{formatPriceFromDollars(item.price)}</td>
-                <td className="px-4 py-3 text-center">
-                  <button
-                    onClick={() => toggleAvailability(item.id, item.available)}
-                    className={`p-2 rounded-lg transition-colors ${
-                      item.available
-                        ? 'text-green-600 hover:bg-green-50'
-                        : 'text-gray-400 hover:bg-gray-100'
-                    }`}
-                  >
-                    {item.available ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
-                  </button>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-center gap-1">
-                    <button
-                      onClick={() => setEditingItem(item)}
-                      className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => deleteItem(item.id)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px]">
+            <thead className="bg-gray-50 border-b">
+              <tr>
+                <th className="px-3 sm:px-4 py-3 text-left text-sm font-semibold text-gray-600">Item</th>
+                <th className="px-3 sm:px-4 py-3 text-left text-sm font-semibold text-gray-600">Category</th>
+                <th className="px-3 sm:px-4 py-3 text-right text-sm font-semibold text-gray-600">Price</th>
+                <th className="px-3 sm:px-4 py-3 text-center text-sm font-semibold text-gray-600">Available</th>
+                <th className="px-3 sm:px-4 py-3 text-center text-sm font-semibold text-gray-600">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y">
+              {filteredItems.map(item => (
+                <tr key={item.id} className="hover:bg-gray-50">
+                  <td className="px-3 sm:px-4 py-3">
+                    <p className="font-medium text-gray-900">{item.name}</p>
+                    {item.description && (
+                      <p className="text-sm text-gray-500 truncate max-w-[50vw] sm:max-w-xs">{item.description}</p>
+                    )}
+                  </td>
+                  <td className="px-3 sm:px-4 py-3 text-gray-600">{item.category_name || 'Uncategorized'}</td>
+                  <td className="px-3 sm:px-4 py-3 text-right font-medium whitespace-nowrap">{formatPriceFromDollars(item.price)}</td>
+                  <td className="px-3 sm:px-4 py-3 text-center">
+                    <button
+                      onClick={() => toggleAvailability(item.id, item.available)}
+                      className={`w-10 h-10 inline-flex items-center justify-center rounded-lg transition-colors ${
+                        item.available
+                          ? 'text-green-600 hover:bg-green-50'
+                          : 'text-gray-400 hover:bg-gray-100'
+                      }`}
+                      aria-label={item.available ? 'Mark unavailable' : 'Mark available'}
+                    >
+                      {item.available ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
+                    </button>
+                  </td>
+                  <td className="px-3 sm:px-4 py-3">
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        onClick={() => setEditingItem(item)}
+                        className="w-10 h-10 inline-flex items-center justify-center text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        aria-label="Edit item"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteItem(item.id)}
+                        className="w-10 h-10 inline-flex items-center justify-center text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        aria-label="Delete item"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
         {filteredItems.length === 0 && (
           <div className="text-center py-12 text-gray-500">
@@ -670,7 +676,7 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Price *</label>
               <div className="relative">
@@ -752,11 +758,11 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
             </div>
           )}
 
-          <div className="flex justify-end gap-3 pt-4 border-t">
-            <button type="button" onClick={onCancel} className="btn btn-secondary">
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-4 border-t">
+            <button type="button" onClick={onCancel} className="btn btn-secondary w-full sm:w-auto">
               Cancel
             </button>
-            <button type="submit" disabled={saving} className="btn btn-primary flex items-center gap-2">
+            <button type="submit" disabled={saving} className="btn btn-primary flex items-center justify-center gap-2 w-full sm:w-auto">
               {saving ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
@@ -849,7 +855,7 @@ function CategoriesSection({ categories, itemCounts, onUpdate }) {
       {/* Add Form */}
       {showAddForm && (
         <form onSubmit={handleAddCategory} className="card p-4 mb-6 space-y-3">
-          <div className="flex gap-4">
+          <div className="flex flex-col sm:flex-row gap-3">
             <input
               type="text"
               value={newCategory.name}
@@ -863,7 +869,7 @@ function CategoriesSection({ categories, itemCounts, onUpdate }) {
               value={newCategory.sort_order}
               onChange={e => setNewCategory(c => ({ ...c, sort_order: parseInt(e.target.value) || 0 }))}
               placeholder="Order"
-              className="input w-24"
+              className="input w-full sm:w-24"
             />
           </div>
           <div>
@@ -875,11 +881,11 @@ function CategoriesSection({ categories, itemCounts, onUpdate }) {
               className="input w-full"
             />
           </div>
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setShowAddForm(false)} className="btn btn-secondary">
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+            <button type="button" onClick={() => setShowAddForm(false)} className="btn btn-secondary w-full sm:w-auto">
               Cancel
             </button>
-            <button type="submit" disabled={saving} className="btn btn-primary flex items-center gap-2">
+            <button type="submit" disabled={saving} className="btn btn-primary flex items-center justify-center gap-2 w-full sm:w-auto">
               {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
               Add Category
             </button>
@@ -894,12 +900,12 @@ function CategoriesSection({ categories, itemCounts, onUpdate }) {
             {editingCategory?.id === cat.id ? (
               /* Edit Mode */
               <div className="p-4 space-y-3">
-                <div className="flex gap-4">
+                <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                   <input
                     type="number"
                     value={editingCategory.sort_order}
                     onChange={e => setEditingCategory(c => ({ ...c, sort_order: parseInt(e.target.value) || 0 }))}
-                    className="input w-20"
+                    className="input w-full sm:w-20"
                     placeholder="Order"
                   />
                   <input
@@ -920,17 +926,17 @@ function CategoriesSection({ categories, itemCounts, onUpdate }) {
                   placeholder="Description (shown to customers)"
                   className="input w-full"
                 />
-                <div className="flex justify-end gap-2">
+                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
                   <button
                     onClick={() => setEditingCategory(null)}
-                    className="btn btn-secondary"
+                    className="btn btn-secondary w-full sm:w-auto"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={() => handleUpdateCategory(cat.id)}
                     disabled={saving}
-                    className="btn btn-primary flex items-center gap-2"
+                    className="btn btn-primary flex items-center justify-center gap-2 w-full sm:w-auto"
                   >
                     {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                     Save
@@ -939,30 +945,32 @@ function CategoriesSection({ categories, itemCounts, onUpdate }) {
               </div>
             ) : (
               /* View Mode */
-              <div className="p-4 flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3">
-                    <span className="text-gray-400 text-sm w-8">{cat.sort_order}</span>
+              <div className="p-4 flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-gray-400 text-sm w-8 flex-shrink-0">{cat.sort_order}</span>
                     <span className="font-medium text-gray-900">{cat.name}</span>
                     <span className="text-gray-400 text-sm">({itemCounts[cat.id] || 0} items)</span>
                   </div>
                   {cat.description && (
-                    <p className="text-sm text-gray-500 mt-1 ml-11">{cat.description}</p>
+                    <p className="text-sm text-gray-500 mt-1 sm:ml-11">{cat.description}</p>
                   )}
                   {!cat.description && (
-                    <p className="text-sm text-gray-400 italic mt-1 ml-11">No description</p>
+                    <p className="text-sm text-gray-400 italic mt-1 sm:ml-11">No description</p>
                   )}
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 flex-shrink-0">
                   <button
                     onClick={() => setEditingCategory({ ...cat })}
-                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    className="w-10 h-10 inline-flex items-center justify-center text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    aria-label="Edit category"
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDeleteCategory(cat.id)}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    className="w-10 h-10 inline-flex items-center justify-center text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    aria-label="Delete category"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -1088,16 +1096,18 @@ function ModifiersSection({ modifierGroups, onUpdate }) {
                   <p className="text-sm text-gray-500">{group.options?.length || 0} options</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
                 <button
                   onClick={() => setEditingGroup({ ...group })}
-                  className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                  className="w-10 h-10 inline-flex items-center justify-center text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                  aria-label="Edit modifier group"
                 >
                   <Pencil className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => handleDeleteGroup(group.id)}
-                  className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                  className="w-10 h-10 inline-flex items-center justify-center text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                  aria-label="Delete modifier group"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -1216,7 +1226,7 @@ function ModifierGroupForm({ group, onSave, onCancel }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card p-6 max-w-md w-full">
+    <form onSubmit={handleSubmit} className="card p-5 sm:p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
       <h3 className="text-lg font-bold mb-4">{group ? 'Edit Modifier Group' : 'New Modifier Group'}</h3>
 
       <div className="space-y-4">
@@ -1243,7 +1253,7 @@ function ModifierGroupForm({ group, onSave, onCancel }) {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Min Selections</label>
             <input
@@ -1277,9 +1287,9 @@ function ModifierGroupForm({ group, onSave, onCancel }) {
         </label>
       </div>
 
-      <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
-        <button type="button" onClick={onCancel} className="btn btn-secondary">Cancel</button>
-        <button type="submit" disabled={saving} className="btn btn-primary flex items-center gap-2">
+      <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 mt-6 pt-4 border-t">
+        <button type="button" onClick={onCancel} className="btn btn-secondary w-full sm:w-auto">Cancel</button>
+        <button type="submit" disabled={saving} className="btn btn-primary flex items-center justify-center gap-2 w-full sm:w-auto">
           {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
           {group ? 'Update' : 'Create'}
         </button>
@@ -1502,9 +1512,9 @@ function OrdersSection() {
 
       {/* Filters */}
       <div className="card p-4">
-        <div className="flex flex-wrap gap-4 items-end">
+        <div className="flex flex-wrap gap-3 sm:gap-4 items-end">
           {/* Search */}
-          <div className="flex-1 min-w-[200px]">
+          <div className="w-full sm:flex-1 sm:min-w-[200px]">
             <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -1519,7 +1529,7 @@ function OrdersSection() {
           </div>
 
           {/* Status Filter */}
-          <div className="w-40">
+          <div className="w-full sm:w-40">
             <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
             <select
               value={statusFilter}
@@ -1536,7 +1546,7 @@ function OrdersSection() {
           </div>
 
           {/* Date Range */}
-          <div className="w-40">
+          <div className="w-[calc(50%-0.375rem)] sm:w-40">
             <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
             <input
               type="date"
@@ -1545,7 +1555,7 @@ function OrdersSection() {
               className="input w-full"
             />
           </div>
-          <div className="w-40">
+          <div className="w-[calc(50%-0.375rem)] sm:w-40">
             <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
             <input
               type="date"
@@ -1558,7 +1568,7 @@ function OrdersSection() {
           {/* Clear Filters */}
           <button
             onClick={clearFilters}
-            className="btn btn-secondary py-2 px-4"
+            className="btn btn-secondary py-2 px-4 w-full sm:w-auto"
           >
             Clear
           </button>
@@ -1637,15 +1647,16 @@ function OrdersSection() {
             </div>
 
             {/* Pagination */}
-            <div className="px-4 py-3 bg-gray-50 border-t flex items-center justify-between">
-              <p className="text-sm text-gray-600">
+            <div className="px-4 py-3 bg-gray-50 border-t flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <p className="text-xs sm:text-sm text-gray-600">
                 Showing {((page - 1) * 20) + 1} to {Math.min(page * 20, pagination.total)} of {pagination.total} orders
               </p>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setPage(p => Math.max(1, p - 1))}
                   disabled={page === 1}
-                  className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-10 h-10 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label="Previous page"
                 >
                   <ChevronLeft className="w-5 h-5" />
                 </button>
@@ -1655,7 +1666,8 @@ function OrdersSection() {
                 <button
                   onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))}
                   disabled={page === pagination.totalPages}
-                  className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-10 h-10 inline-flex items-center justify-center rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label="Next page"
                 >
                   <ChevronRight className="w-5 h-5" />
                 </button>
@@ -2022,8 +2034,8 @@ function SettingsSection({ settings, onUpdate }) {
           Set the sales tax rate applied to all orders. Enter the percentage (e.g., 8.25 for 8.25%).
         </p>
 
-        <div className="flex items-center gap-4">
-          <div className="relative flex-1 max-w-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+          <div className="relative w-full sm:flex-1 sm:max-w-xs">
             <input
               type="number"
               step="0.01"
@@ -2041,7 +2053,7 @@ function SettingsSection({ settings, onUpdate }) {
           <button
             onClick={handleSaveTaxRate}
             disabled={saving}
-            className="btn btn-primary px-6 py-3 flex items-center gap-2"
+            className="btn btn-primary px-6 py-3 flex items-center justify-center gap-2 w-full sm:w-auto"
           >
             {saving ? (
               <>

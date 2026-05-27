@@ -9,6 +9,7 @@ import MenuItemCard from '../components/Menu/MenuItemCard';
 import ItemModal from '../components/Menu/ItemModal';
 import CartDrawer from '../components/Cart/CartDrawer';
 import HeroSection from '../components/Menu/HeroSection';
+import PartnerCardsSection from '../components/Menu/PartnerCardsSection';
 import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
 
@@ -249,6 +250,8 @@ export default function MenuPage() {
               </div>
             </section>
             ))}
+
+            <PartnerCardsSection />
           </>
         )}
 
