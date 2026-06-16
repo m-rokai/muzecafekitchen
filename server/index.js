@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import menuRoutes from './routes/menu.js';
 import orderRoutes from './routes/orders.js';
 import adminRoutes from './routes/admin.js';
+import paymentRoutes from './routes/payments.js';
 import { startPickupReminderScanner } from './services/pickupReminder.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -90,6 +91,7 @@ app.use('/uploads', express.static(uploadsPath));
 app.use('/api/menu', menuRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
