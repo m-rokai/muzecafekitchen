@@ -33,6 +33,9 @@ test('markOrderPaid is idempotent and records one payment', () => {
   const second = db.markOrderPaid(id, { sessionId: 'cs_1', paymentIntentId: 'pi_1', amountCents: 541 });
   assert.equal(second.alreadyPaid, true);
 
+  const paymentRows = db.default.prepare('SELECT COUNT(*) AS c FROM payments WHERE order_id = ?').get(id).c;
+  assert.equal(paymentRows, 1, 'exactly one payments row must exist after a retry');
+
   const paid = db.getActiveOrders().map(o => o.id);
   assert.ok(paid.includes(id), 'paid order must appear in the kitchen queue');
 });

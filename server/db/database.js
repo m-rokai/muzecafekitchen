@@ -619,6 +619,9 @@ export function createOrder(order) {
 // Idempotently mark an order paid and append a payments-ledger row. Returns
 // { alreadyPaid, order }. If the order is already paid, no second ledger row
 // is written (safe against Stripe webhook retries / duplicate deliveries).
+// If the order does not exist, returns { alreadyPaid: false, notFound: true,
+// order: null } — callers must check `notFound` (or `order` being null) before
+// finalizing.
 export function markOrderPaid(orderId, { sessionId = null, paymentIntentId = null, amountCents = null } = {}) {
   const run = db.transaction(() => {
     const existing = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
@@ -735,6 +738,7 @@ export function getOrdersAwaitingPickupReminder(minutesOld = 10) {
     SELECT id
     FROM orders
     WHERE status = 'ready'
+      AND payment_status = 'paid'
       AND email IS NOT NULL
       AND email != ''
       AND pickup_reminder_sent = 0
