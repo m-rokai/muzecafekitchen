@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dollarsToCents, buildCheckoutLineItems } from './payments.js';
+import { dollarsToCents, buildCheckoutLineItems, createCheckoutSessionForOrder } from './payments.js';
 
 test('dollarsToCents converts dollars to integer cents', () => {
   assert.equal(dollarsToCents(10.5), 1050);
@@ -22,7 +22,6 @@ test('buildCheckoutLineItems charges the exact order total as one line', () => {
 });
 
 test('createCheckoutSessionForOrder builds a payment-mode session for the order', async () => {
-  const { createCheckoutSessionForOrder } = await import('./payments.js');
   const calls = [];
   const fakeStripe = {
     checkout: { sessions: { create: async (params) => { calls.push(params); return { id: 'cs_test_123', url: 'https://stripe.test/cs_test_123' }; } } },
@@ -40,5 +39,7 @@ test('createCheckoutSessionForOrder builds a payment-mode session for the order'
   assert.equal(calls[0].customer_email, 'a@b.com');
   assert.equal(calls[0].metadata.order_id, '7');
   assert.equal(calls[0].metadata.channel, 'online');
+  assert.equal(calls[0].payment_intent_data.metadata.order_id, '7');
+  assert.equal(calls[0].payment_intent_data.metadata.channel, 'online');
   assert.equal(calls[0].line_items[0].price_data.unit_amount, 1050);
 });

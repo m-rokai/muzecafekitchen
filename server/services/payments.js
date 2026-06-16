@@ -26,6 +26,7 @@ export function buildCheckoutLineItems(order) {
 // Create a Stripe-hosted Checkout Session for an order. `stripe` is injectable
 // for tests; `origin` is the absolute base URL for success/cancel redirects.
 export async function createCheckoutSessionForOrder(order, { stripe = getStripe(), origin } = {}) {
+  if (!origin) throw new Error('createCheckoutSessionForOrder: origin is required');
   return stripe.checkout.sessions.create({
     mode: 'payment',
     line_items: buildCheckoutLineItems(order),
