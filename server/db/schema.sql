@@ -71,8 +71,27 @@ CREATE TABLE IF NOT EXISTS orders (
   cancellation_reason TEXT,
   cancelled_by TEXT CHECK(cancelled_by IN ('customer', 'staff') OR cancelled_by IS NULL),
   pickup_reminder_sent INTEGER DEFAULT 0,
+  channel TEXT DEFAULT 'online',
+  payment_status TEXT DEFAULT 'unpaid',
+  stripe_session_id TEXT,
+  stripe_payment_intent_id TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Payments ledger (one row per successful charge; shared by online + kiosk)
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL,
+  channel TEXT NOT NULL DEFAULT 'online',
+  amount_cents INTEGER,
+  currency TEXT DEFAULT 'usd',
+  status TEXT NOT NULL DEFAULT 'paid',
+  stripe_session_id TEXT,
+  stripe_payment_intent_id TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
 );
 
 -- Order Items
