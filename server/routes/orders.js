@@ -4,7 +4,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { orderRateLimit } from '../middleware/rateLimit.js';
 import { validateOrderCreation, validateOrderStatus } from '../validators/schemas.js';
 import { sanitizeOrderData, sanitizeName, sanitizeText } from '../utils/sanitize.js';
-import { sendOrderConfirmation, sendOrderReadyNotification, sendOrderCancellation } from '../services/email.js';
+import { sendOrderReadyNotification, sendOrderCancellation } from '../services/email.js';
 import { schedulePickupReminderAfterReady } from '../services/pickupReminder.js';
 
 const router = express.Router();
@@ -144,21 +144,9 @@ router.post('/', orderRateLimit, (req, res) => {
     // Get the complete order
     const order = db.getOrder(orderId);
 
-    // Emit to kitchen display
-    const io = req.app.get('io');
-    if (io) {
-      console.log('📤 Emitting new-order to kitchen:', order.id, order.customer_name);
-      io.emit('new-order', order);
-    } else {
-      console.log('⚠️ Socket.io not available');
-    }
-
-    // Send confirmation email (async, don't block response)
-    if (order.email) {
-      sendOrderConfirmation(order).catch(err => {
-        console.error('Failed to send confirmation email:', err);
-      });
-    }
+    // NOTE: kitchen emit + confirmation email now happen in the Stripe webhook
+    // once payment is confirmed (see routes/stripeWebhook.js). Orders are
+    // created unpaid and must be paid via Checkout before reaching the kitchen.
 
     res.status(201).json({
       id: orderId,
