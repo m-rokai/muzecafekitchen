@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { CheckCircle, Clock, Coffee, ArrowLeft, Loader2, WifiOff, Laptop, XCircle } from 'lucide-react';
 import { orderAPI } from '../utils/api';
 import { formatPriceFromDollars, formatPickupNumber, formatTime } from '../utils/formatters';
 import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
+import { useCart } from '../context/CartContext';
 import CancelReasonModal from '../components/CancelReasonModal';
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL ||
@@ -14,6 +15,10 @@ const SOCKET_URL = import.meta.env.VITE_WS_URL ||
 export default function ConfirmationPage() {
   const { orderId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { clearCart } = useCart();
+  const paidReturn = searchParams.get('paid') === '1';
+  const finalizedRef = useRef(false);
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -72,6 +77,19 @@ export default function ConfirmationPage() {
       socketRef.current?.disconnect();
     };
   }, [orderId]);
+
+  // On a successful Stripe return, clear the cart once and remember the order
+  // so the menu's active-order banner can show it. Runs after the order loads.
+  useEffect(() => {
+    if (!paidReturn || !order || finalizedRef.current) return;
+    finalizedRef.current = true;
+    clearCart();
+    localStorage.setItem('muze_last_order', JSON.stringify({
+      orderId: order.id,
+      pickupNumber: order.pickup_number,
+      timestamp: Date.now(),
+    }));
+  }, [paidReturn, order, clearCart]);
 
   async function loadOrder() {
     try {
@@ -220,7 +238,7 @@ export default function ConfirmationPage() {
               <span>{formatPriceFromDollars(order.tax)}</span>
             </div>
             <div className="flex justify-between text-lg font-bold pt-2 border-t border-muze-gold/20">
-              <span className="text-muze-dark">Total · Pay at pickup</span>
+              <span className="text-muze-dark">Total{(paidReturn || order.payment_status === 'paid') ? ' · Paid' : ''}</span>
               <span className="text-muze-brown">{formatPriceFromDollars(order.total)}</span>
             </div>
           </div>
