@@ -142,6 +142,15 @@ export const orderAPI = {
   }),
 };
 
+// ============ Payments endpoints ============
+export const paymentsAPI = {
+  // Returns { url } — the Stripe Checkout URL to redirect to.
+  createCheckoutSession: (orderId) => request('/payments/checkout-session', {
+    method: 'POST',
+    body: { orderId },
+  }),
+};
+
 // ============ Settings endpoints (public read, protected write) ============
 export const settingsAPI = {
   // Public endpoint for checkout
@@ -310,4 +319,4 @@ export const adminAPI = {
   getOrder: (id) => authRequest(`/admin/orders/${id}`),
 };
 
-export default { menuAPI, orderAPI, adminAPI, settingsAPI };
+export default { menuAPI, orderAPI, adminAPI, settingsAPI, paymentsAPI };
