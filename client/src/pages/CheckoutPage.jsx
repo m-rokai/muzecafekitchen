@@ -8,7 +8,7 @@ import GradientMesh from '../components/glass/GradientMesh';
 
 export default function CheckoutPage() {
   const navigate = useNavigate();
-  const { items, cartTotal, customerName, setCustomerName, clearCart, getItemTotal } = useCart();
+  const { items, cartTotal, customerName, setCustomerName, getItemTotal } = useCart();
 
   const [name, setName] = useState(customerName);
   const [email, setEmail] = useState(localStorage.getItem('muze_customer_email') || '');
@@ -76,6 +76,7 @@ export default function CheckoutPage() {
       // confirmation page only after payment succeeds (cancel returns here
       // with the cart intact). Payment success -> webhook -> kitchen + email.
       const { url } = await paymentsAPI.createCheckoutSession(result.id);
+      if (!url) throw new Error('No checkout URL returned from server.');
       window.location.href = url;
     } catch (err) {
       console.error('Checkout failed:', err);
