@@ -44,6 +44,8 @@ Node/Express backend serves *both* the kiosk (card-present) and online ordering
 | Capture mode | **Automatic** (default) | No fulfillment delay for grab-and-go. |
 | Receipts | **Stripe email receipt** (default) | `receipt_email`; no printer, no SMS in v1. |
 | Tipping | **Off** (default) | Unattended grab-and-go; M2 is screenless. |
+| Tap to Pay (NFC) | **Ruled out** | Tablet is a Galaxy Tab A11 (SM-X130) — confirmed **no NFC**. Not revisitable on this hardware. |
+| Mounting | **3D-printed mount** | Custom mount seats the tablet and positions the M2 prominently under the screen (solves "customers don't notice the reader"). Lockable enclosure optional. |
 
 ## 4. System architecture
 
@@ -165,8 +167,9 @@ Node/Express backend serves *both* the kiosk (card-present) and online ordering
   Start on Boot, Restart After Crash, hidden nav/status bars, blocked other apps,
   scheduled reboot, keep-screen-on; admin (port 2323) behind a strong PIN on LAN; set
   OS updates to manual.
-- Mount in a **lockable steel countertop enclosure** (~$100), bolted down. Confirm the
-  cutout against the exact Galaxy Tab model before ordering.
+- Mount via a **3D-printed mount** that seats the tablet and positions the **M2
+  prominently under the screen** (so customers can't miss it). Add a lockable steel
+  enclosure only if anti-theft proves necessary; bolt down either way.
 
 ## 11. Loss prevention posture
 
@@ -210,10 +213,10 @@ Stripe Terminal does **not** permit *fully* unattended card payments. Decision:
 
 | Item | Have? | ~USD | Notes |
 |---|---|---|---|
-| Galaxy Tab | ✅ | $0 | Kiosk touchscreen; confirm model for enclosure fitment. |
-| Stripe Reader M2 | ✅ | $0 | Kiosk reader (Bluetooth); keep docked/charging. |
+| Galaxy Tab A11 (SM-X130) | ✅ | $0 | Kiosk touchscreen; Android 15, **no NFC** (Tap to Pay impossible). |
+| Stripe Reader M2 | ✅ | $0 | Kiosk reader (Bluetooth); keep docked/charging, mounted under the screen. |
 | Fully Single App Kiosk PLUS | — | ~$11 | One-time, per device. |
-| Lockable steel enclosure | — | ~$100 | Anti-theft; confirm cutout vs tablet model. |
+| Mount / enclosure | — | $0–100 | 3D-printed mount (seats tablet, M2 prominent under screen); add a lockable steel enclosure only if anti-theft demands it. |
 | Visible Wi-Fi camera + signage | — | ~$40 | Deterrent; add a 2nd only if shrink >5%. |
 | Barcode labels (house items) | — | $0–20 | Vendor items use existing UPCs. |
 | **WisePOS E (contingency upgrade)** | — | ~$249 | Only if M2 Bluetooth proves unreliable unattended. |
@@ -245,7 +248,6 @@ hard-capped against comping, discounting, or altering payment routing.
 
 ## 17. Open items to confirm
 
-- Exact Galaxy Tab model + Android version (enclosure fitment).
 - Lobby Wi-Fi reliability (offline-mode reliance).
 - Confirm production DB is SQLite (repo shows better-sqlite3; brief said Postgres).
 - Whether a paper receipt is ever required by landlord/operator (default: email only).
