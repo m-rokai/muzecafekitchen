@@ -11,6 +11,7 @@ import menuRoutes from './routes/menu.js';
 import orderRoutes from './routes/orders.js';
 import adminRoutes from './routes/admin.js';
 import paymentRoutes from './routes/payments.js';
+import stripeWebhookRoutes from './routes/stripeWebhook.js';
 import { startPickupReminderScanner } from './services/pickupReminder.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -76,6 +77,11 @@ const io = new Server(httpServer, { cors: corsOptions });
 
 // Middleware
 app.use(cors(corsOptions));
+
+// Stripe webhook needs the raw body for signature verification — must be
+// registered BEFORE express.json() or verification fails silently.
+app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeWebhookRoutes);
+
 app.use(express.json());
 
 // Make io accessible to routes
