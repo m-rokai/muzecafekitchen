@@ -7,6 +7,8 @@ test('dollarsToCents converts dollars to integer cents', () => {
   assert.equal(dollarsToCents(0.07), 7);
   assert.equal(dollarsToCents(12.34), 1234);
   assert.equal(dollarsToCents(0), 0);
+  assert.equal(dollarsToCents(0.1 + 0.2), 30); // classic float trap: 0.30000000000000004
+  assert.equal(dollarsToCents('10.50'), 1050);  // defensive: stringy numeric input
 });
 
 test('buildCheckoutLineItems charges the exact order total as one line', () => {

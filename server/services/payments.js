@@ -1,5 +1,3 @@
-import { getStripe } from '../lib/stripe.js';
-
 // Convert a dollar amount (REAL in the DB) to integer cents for Stripe.
 export function dollarsToCents(dollars) {
   return Math.round(Number(dollars) * 100);
