@@ -1,3 +1,5 @@
+import { getStripe } from '../lib/stripe.js';
+
 // Convert a dollar amount (REAL in the DB) to integer cents for Stripe.
 export function dollarsToCents(dollars) {
   return Math.round(Number(dollars) * 100);
@@ -19,4 +21,19 @@ export function buildCheckoutLineItems(order) {
       },
     },
   ];
+}
+
+// Create a Stripe-hosted Checkout Session for an order. `stripe` is injectable
+// for tests; `origin` is the absolute base URL for success/cancel redirects.
+export async function createCheckoutSessionForOrder(order, { stripe = getStripe(), origin } = {}) {
+  return stripe.checkout.sessions.create({
+    mode: 'payment',
+    line_items: buildCheckoutLineItems(order),
+    success_url: `${origin}/confirmation/${order.id}?paid=1`,
+    cancel_url: `${origin}/checkout`,
+    client_reference_id: String(order.id),
+    customer_email: order.email || undefined,
+    metadata: { order_id: String(order.id), channel: 'online' },
+    payment_intent_data: { metadata: { order_id: String(order.id), channel: 'online' } },
+  });
 }
