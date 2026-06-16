@@ -1,11 +1,12 @@
 import express from 'express';
 import * as db from '../db/database.js';
 import { createCheckoutSessionForOrder } from '../services/payments.js';
+import { orderRateLimit } from '../middleware/rateLimit.js';
 
 const router = express.Router();
 
 // Create a Stripe Checkout Session for an existing unpaid order.
-router.post('/checkout-session', async (req, res) => {
+router.post('/checkout-session', orderRateLimit, async (req, res) => {
   try {
     const orderId = parseInt(req.body?.orderId, 10);
     if (!Number.isInteger(orderId) || orderId <= 0) {
@@ -18,7 +19,9 @@ router.post('/checkout-session', async (req, res) => {
       return res.status(409).json({ message: 'Order is already paid' });
     }
 
-    const origin = req.headers.origin || process.env.PUBLIC_URL || 'http://localhost:5173';
+    // Use only our own configured base URL for Stripe redirect targets — never
+    // the request Origin header (attacker-controllable → open redirect via Stripe).
+    const origin = process.env.PUBLIC_URL || 'http://localhost:5173';
     const session = await createCheckoutSessionForOrder(order, { origin });
 
     return res.json({ url: session.url });
