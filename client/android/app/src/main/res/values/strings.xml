@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Muze Café Kiosk</string>
+    <string name="title_activity_main">Muze Café Kiosk</string>
+    <string name="package_name">com.muzeoffice.cafekiosk</string>
+    <string name="custom_url_scheme">com.muzeoffice.cafekiosk</string>
+</resources>
