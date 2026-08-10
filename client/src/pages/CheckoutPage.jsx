@@ -2,13 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, User, Mail, AlertCircle, Loader2, Lock } from 'lucide-react';
 import { useCart } from '../context/CartContext';
-import { orderAPI, settingsAPI } from '../utils/api';
+import { orderAPI, paymentsAPI, settingsAPI } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
 import GradientMesh from '../components/glass/GradientMesh';
 
 export default function CheckoutPage() {
   const navigate = useNavigate();
-  const { items, cartTotal, customerName, setCustomerName, clearCart, getItemTotal } = useCart();
+  const { items, cartTotal, customerName, setCustomerName, getItemTotal } = useCart();
 
   const [name, setName] = useState(customerName);
   const [email, setEmail] = useState(localStorage.getItem('muze_customer_email') || '');
@@ -71,17 +71,17 @@ export default function CheckoutPage() {
       orderSubmittedRef.current = true;
       setCustomerName(name.trim());
       if (email.trim()) localStorage.setItem('muze_customer_email', email.trim());
-      localStorage.setItem('muze_last_order', JSON.stringify({
-        orderId: result.id,
-        pickupNumber: result.pickup_number,
-        timestamp: Date.now(),
-      }));
-      clearCart();
-      navigate(`/confirmation/${result.id}`, { replace: true });
+
+      // Hand off to Stripe-hosted Checkout. The cart is cleared on the
+      // confirmation page only after payment succeeds (cancel returns here
+      // with the cart intact). Payment success -> webhook -> kitchen + email.
+      const { url } = await paymentsAPI.createCheckoutSession(result.id);
+      if (!url) throw new Error('No checkout URL returned from server.');
+      window.location.href = url;
     } catch (err) {
-      console.error('Order failed:', err);
-      setError(err.message || 'Failed to place order. Please try again.');
-    } finally {
+      console.error('Checkout failed:', err);
+      setError(err.message || 'Failed to start checkout. Please try again.');
+      orderSubmittedRef.current = false;
       setLoading(false);
     }
   };
@@ -204,10 +204,10 @@ export default function CheckoutPage() {
             </div>
           </div>
 
-          {/* Pay at pickup */}
+          {/* Card payment */}
           <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 mb-5">
             <p className="text-amber-900 text-sm text-center">
-              <strong>Pay at pickup.</strong> You'll settle up when you grab your order at Muze Office.
+              <strong>Secure card payment.</strong> You'll pay by card on the next step. We start your order once payment is confirmed.
             </p>
           </div>
 
@@ -229,11 +229,11 @@ export default function CheckoutPage() {
           className="w-full max-w-2xl mx-auto block py-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-lg hover:bg-muze-brown hover:text-white transition-colors shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {loading ? (
-            <><Loader2 className="w-5 h-5 animate-spin" /> Placing Order…</>
+            <><Loader2 className="w-5 h-5 animate-spin" /> Redirecting to payment…</>
           ) : !kitchenStatus.open ? (
             <><Lock className="w-5 h-5" /> Ordering paused</>
           ) : (
-            <>Place Order · {formatPriceFromDollars(total)}</>
+            <>Continue to Payment · {formatPriceFromDollars(total)}</>
           )}
         </button>
       </div>

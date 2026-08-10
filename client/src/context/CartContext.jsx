@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useEffect } from 'react';
+import { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
 
 const CartContext = createContext();
 
@@ -121,10 +121,10 @@ export function CartProvider({ children }) {
     dispatch({ type: 'SET_CUSTOMER_NAME', payload: name });
   };
 
-  const clearCart = () => {
+  const clearCart = useCallback(() => {
     dispatch({ type: 'CLEAR_CART' });
     localStorage.removeItem(STORAGE_KEY);
-  };
+  }, []);
 
   const getItemTotal = (item) => {
     const basePrice = item.price * item.quantity;

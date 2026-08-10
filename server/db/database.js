@@ -85,6 +85,45 @@ try {
   console.error('Migration error (cancellation/reminder columns):', err);
 }
 
+// Migration: Add payment columns to orders + payments table (Phase 1 Stripe).
+// Existing rows are legacy "pay at pickup" orders → backfill as 'paid' so
+// kitchen/revenue queries are unaffected. New rows default to 'unpaid'.
+try {
+  const columns = db.prepare('PRAGMA table_info(orders)').all();
+  const colNames = new Set(columns.map(col => col.name));
+  if (!colNames.has('channel')) {
+    db.prepare("ALTER TABLE orders ADD COLUMN channel TEXT DEFAULT 'online'").run();
+  }
+  if (!colNames.has('payment_status')) {
+    db.prepare("ALTER TABLE orders ADD COLUMN payment_status TEXT DEFAULT 'unpaid'").run();
+    db.prepare("UPDATE orders SET payment_status = 'paid'").run(); // backfill legacy orders
+    console.log('Migration: Added payment_status to orders (legacy rows backfilled paid)');
+  }
+  if (!colNames.has('stripe_session_id')) {
+    db.prepare('ALTER TABLE orders ADD COLUMN stripe_session_id TEXT').run();
+  }
+  if (!colNames.has('stripe_payment_intent_id')) {
+    db.prepare('ALTER TABLE orders ADD COLUMN stripe_payment_intent_id TEXT').run();
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      channel TEXT NOT NULL DEFAULT 'online',
+      amount_cents INTEGER,
+      currency TEXT DEFAULT 'usd',
+      status TEXT NOT NULL DEFAULT 'paid',
+      stripe_session_id TEXT,
+      stripe_payment_intent_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+  `);
+} catch (err) {
+  console.error('Migration error (payments columns):', err);
+}
+
 // Migration: Add announcement settings
 try {
   const announcement = db.prepare("SELECT value FROM settings WHERE key = 'announcement_text'").get();
@@ -577,6 +616,36 @@ export function createOrder(order) {
   return { id: result.lastInsertRowid, pickup_number: pickupNumber };
 }
 
+// Idempotently mark an order paid and append a payments-ledger row. Returns
+// { alreadyPaid, order }. If the order is already paid, no second ledger row
+// is written (safe against Stripe webhook retries / duplicate deliveries).
+// If the order does not exist, returns { alreadyPaid: false, notFound: true,
+// order: null } — callers must check `notFound` (or `order` being null) before
+// finalizing.
+export function markOrderPaid(orderId, { sessionId = null, paymentIntentId = null, amountCents = null } = {}) {
+  const run = db.transaction(() => {
+    const existing = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
+    if (!existing) return { alreadyPaid: false, notFound: true, order: null };
+    if (existing.payment_status === 'paid') {
+      return { alreadyPaid: true, order: getOrder(orderId) };
+    }
+    db.prepare(`
+      UPDATE orders
+      SET payment_status = 'paid',
+          stripe_session_id = ?,
+          stripe_payment_intent_id = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(sessionId, paymentIntentId, orderId);
+    db.prepare(`
+      INSERT INTO payments (order_id, channel, amount_cents, currency, status, stripe_session_id, stripe_payment_intent_id)
+      VALUES (?, 'online', ?, 'usd', 'paid', ?, ?)
+    `).run(orderId, amountCents, sessionId, paymentIntentId);
+    return { alreadyPaid: false, order: getOrder(orderId) };
+  });
+  return run();
+}
+
 export function getOrder(id) {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
   if (!order) return null;
@@ -596,6 +665,7 @@ export function getActiveOrders() {
   const orders = db.prepare(`
     SELECT * FROM orders
     WHERE status IN ('pending', 'preparing', 'ready')
+      AND payment_status = 'paid'
     ORDER BY
       CASE status
         WHEN 'pending' THEN 1
@@ -668,6 +738,7 @@ export function getOrdersAwaitingPickupReminder(minutesOld = 10) {
     SELECT id
     FROM orders
     WHERE status = 'ready'
+      AND payment_status = 'paid'
       AND email IS NOT NULL
       AND email != ''
       AND pickup_reminder_sent = 0
@@ -779,7 +850,7 @@ export function getOrderStats(startDate = null, endDate = null) {
   const stats = db.prepare(`
     SELECT
       COUNT(*) as total_orders,
-      COALESCE(SUM(CASE WHEN status != 'cancelled' THEN total ELSE 0 END), 0) as total_revenue,
+      COALESCE(SUM(CASE WHEN status != 'cancelled' AND payment_status = 'paid' THEN total ELSE 0 END), 0) as total_revenue,
       COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_orders,
       COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled_orders,
       COUNT(CASE WHEN status IN ('pending', 'preparing', 'ready') THEN 1 END) as active_orders
@@ -801,7 +872,7 @@ export function getTodayOrderCount() {
 export function getTodayRevenue() {
   const result = db.prepare(`
     SELECT COALESCE(SUM(total), 0) as total FROM orders
-    WHERE date(created_at) = date('now') AND status != 'cancelled'
+    WHERE date(created_at) = date('now') AND status != 'cancelled' AND payment_status = 'paid'
   `).get();
   return result.total;
 }
