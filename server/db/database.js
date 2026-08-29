@@ -1,15 +1,15 @@
 import Database from 'better-sqlite3';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 import { categories, menuItems, modifierGroups, modifierOptions } from './seed.js';
+import { runMigrations } from './migrations.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Use DATABASE_PATH env var for production (Fly.io persistent volume)
 const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'muze_orders.db');
-const schemaPath = path.join(__dirname, 'schema.sql');
 
 function getMenuImageUrl(itemName) {
   const slug = itemName
@@ -22,137 +22,62 @@ function getMenuImageUrl(itemName) {
   return `/uploads/menu-${slug}.webp`;
 }
 
-const generatedMenuImageItemNames = new Set([
-  ...menuItems.map(item => item.name),
-  'Just Peachy',
-  'Iced Cold Foam Vanilla Latte',
-  'Breakfast Panini',
-  'Breakfast Quesadilla',
-  'Breakfast Sliders',
-  'French Toast Casserole',
-  'Smothered Green Burrito',
-  'Tamale Breakfast',
-  'California Turkey',
-  'Italian Panini',
-  'Roast Beef Panini with Au Jus',
-  'Southwest Quesadilla',
-  'Jalapeno Tuna Melt',
-  'Fresh Fruit',
-  'Hash Brown Patties',
-  'Passion Fruit Boba',
-  'Pasta Salad',
-  'Potato Salad',
-]);
+export function dollarsToCents(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) return 0;
+  return Math.round(amount * 100);
+}
+
+export function centsToDollars(cents) {
+  const amount = Number.isInteger(cents) ? cents : 0;
+  return amount / 100;
+}
+
+export const FULFILLMENT_PAYMENT_STATUSES = Object.freeze(['authorized', 'paid']);
+export const LEGACY_CASH_PAYMENT_METHOD = 'cash';
+
+/**
+ * Cash checkout is explicit for the legacy flow. Provider states that are
+ * unpaid/awaiting are not eligible for fulfillment until a future adapter
+ * records authorization or payment.
+ */
+export function isPaymentFulfillmentEligible(order) {
+  const paymentStatus = String(order?.payment_status || '').toLowerCase();
+  if (FULFILLMENT_PAYMENT_STATUSES.includes(paymentStatus)) return true;
+  return paymentStatus === 'unpaid'
+    && order?.payment_method === LEGACY_CASH_PAYMENT_METHOD;
+}
+
+export const LEGAL_STATUS_TRANSITIONS = Object.freeze({
+  pending: 'preparing',
+  preparing: 'ready',
+  ready: 'completed',
+});
 
 // Initialize database
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
-// Run schema if database is new
-const schema = fs.readFileSync(schemaPath, 'utf8');
-db.exec(schema);
+// Schema/data changes are applied only through the versioned runner. This is
+// safe for both a new checkout and the existing Fly persistent volume.
+const appliedMigrations = runMigrations(db);
+console.log('Database migrations applied:', appliedMigrations.map(m => `${m.version}:${m.name}`).join(', '));
 
-// Migration: Add email column to orders table if it doesn't exist
-try {
-  const columns = db.prepare("PRAGMA table_info(orders)").all();
-  const hasEmail = columns.some(col => col.name === 'email');
-  if (!hasEmail) {
-    db.exec('ALTER TABLE orders ADD COLUMN email TEXT');
-    console.log('Migration: Added email column to orders table');
-  }
-} catch (err) {
-  console.error('Migration error:', err);
+export function getDatabasePath() {
+  return dbPath;
 }
 
-// Migration: Add cancellation + pickup-reminder columns to orders table
-try {
-  const columns = db.prepare("PRAGMA table_info(orders)").all();
-  const colNames = new Set(columns.map(col => col.name));
-  if (!colNames.has('cancellation_reason')) {
-    db.prepare('ALTER TABLE orders ADD COLUMN cancellation_reason TEXT').run();
-    console.log('Migration: Added cancellation_reason column to orders');
-  }
-  if (!colNames.has('cancelled_by')) {
-    db.prepare('ALTER TABLE orders ADD COLUMN cancelled_by TEXT').run();
-    console.log('Migration: Added cancelled_by column to orders');
-  }
-  if (!colNames.has('pickup_reminder_sent')) {
-    db.prepare('ALTER TABLE orders ADD COLUMN pickup_reminder_sent INTEGER DEFAULT 0').run();
-    console.log('Migration: Added pickup_reminder_sent column to orders');
-  }
-} catch (err) {
-  console.error('Migration error (cancellation/reminder columns):', err);
+export function checkDatabaseIntegrity() {
+  const result = db.prepare('PRAGMA integrity_check').get();
+  return result?.integrity_check || null;
 }
 
-// Migration: Add announcement settings
-try {
-  const announcement = db.prepare("SELECT value FROM settings WHERE key = 'announcement_text'").get();
-  if (!announcement) {
-    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run('announcement_text', '');
-    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run('announcement_enabled', 'false');
-    console.log('Migration: Added announcement settings');
-  }
-} catch (err) {
-  console.error('Migration error (announcement):', err);
+export function backupDatabase(destinationPath) {
+  return db.backup(destinationPath);
 }
 
-// Migration: Add kitchen open/closed setting (defaults to open)
-try {
-  const kitchenOpen = db.prepare("SELECT value FROM settings WHERE key = 'kitchen_open'").get();
-  if (!kitchenOpen) {
-    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run('kitchen_open', 'true');
-    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run('kitchen_closed_message', '');
-    console.log('Migration: Added kitchen open/closed setting');
-  }
-} catch (err) {
-  console.error('Migration error (kitchen status):', err);
-}
 
-// Migration: Add popular_item_ids setting — comma-separated menu_item ids in
-// popularity order. Initially seeded from Toast Dec 2025–Apr 2026 product mix.
-try {
-  const popular = db.prepare("SELECT value FROM settings WHERE key = 'popular_item_ids'").get();
-  if (!popular) {
-    // Toast top sellers: 16 Breakfast Burrito, 17 Breakfast Croissant,
-    // 29 Italian Chicken Panini, 30 Turkey Grill, 21 Jamaican Me Crazy.
-    // Toast #6 (French Dip Panini) isn't on the online menu so we ship 5.
-    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(
-      'popular_item_ids',
-      '16,17,29,30,21',
-    );
-    console.log('Migration: Seeded popular_item_ids from Toast data');
-  }
-} catch (err) {
-  console.error('Migration error (popular_item_ids):', err);
-}
-
-// Migration: Seed generated menu image URLs for baseline menu items. Keep any
-// manually uploaded/admin-selected images intact.
-try {
-  const itemsWithoutImages = db.prepare(`
-    SELECT id, name
-    FROM menu_items
-    WHERE image_url IS NULL OR image_url = ''
-  `).all();
-
-  if (itemsWithoutImages.length > 0) {
-    const updateImage = db.prepare('UPDATE menu_items SET image_url = ? WHERE id = ?');
-    let updatedCount = 0;
-
-    for (const item of itemsWithoutImages) {
-      if (!generatedMenuImageItemNames.has(item.name)) continue;
-      updateImage.run(getMenuImageUrl(item.name), item.id);
-      updatedCount++;
-    }
-
-    if (updatedCount > 0) {
-      console.log(`Migration: Added generated image URLs for ${updatedCount} seeded menu items`);
-    }
-  }
-} catch (err) {
-  console.error('Migration error (menu image URLs):', err);
-}
 
 // Seed database with initial menu data if empty
 export function seedDatabase() {
@@ -175,8 +100,9 @@ export function seedDatabase() {
 
     // Insert menu items
     const insertItem = db.prepare(`
-      INSERT INTO menu_items (name, description, price, category_id, image_url, available, sort_order)
-      VALUES (?, ?, ?, ?, ?, 1, ?)
+      INSERT INTO menu_items
+        (name, description, price, price_cents, category_id, image_url, available, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?)
     `);
 
     let sortOrder = 0;
@@ -184,7 +110,16 @@ export function seedDatabase() {
       // Find category by id from seed data
       const category = categories.find(c => c.id === item.category_id);
       const categoryId = category ? categoryMap.get(category.name) : null;
-      insertItem.run(item.name, item.description || '', item.price, categoryId, getMenuImageUrl(item.name), sortOrder++);
+      const priceCents = dollarsToCents(item.price);
+      insertItem.run(
+        item.name,
+        item.description || '',
+        centsToDollars(priceCents),
+        priceCents,
+        categoryId,
+        getMenuImageUrl(item.name),
+        sortOrder++,
+      );
     }
 
     // Insert modifier groups
@@ -201,15 +136,24 @@ export function seedDatabase() {
 
     // Insert modifier options
     const insertOption = db.prepare(`
-      INSERT INTO modifier_options (group_id, name, display_name, price_adjustment, available, sort_order)
-      VALUES (?, ?, ?, ?, 1, ?)
+      INSERT INTO modifier_options
+        (group_id, name, display_name, price_adjustment, price_adjustment_cents, available, sort_order)
+      VALUES (?, ?, ?, ?, ?, 1, ?)
     `);
 
     let optionOrder = 0;
     for (const option of modifierOptions) {
       const groupId = groupMap.get(option.group_id);
       if (groupId) {
-        insertOption.run(groupId, option.name, option.name, option.price, optionOrder++);
+        const adjustmentCents = dollarsToCents(option.price);
+        insertOption.run(
+          groupId,
+          option.name,
+          option.name,
+          centsToDollars(adjustmentCents),
+          adjustmentCents,
+          optionOrder++,
+        );
       }
     }
 
@@ -324,13 +268,16 @@ export function getMenuItem(id) {
 
 export function createMenuItem(item) {
   const stmt = db.prepare(`
-    INSERT INTO menu_items (name, description, price, category_id, image_url, available, sort_order)
-    VALUES (@name, @description, @price, @category_id, @image_url, @available, @sort_order)
+    INSERT INTO menu_items
+      (name, description, price, price_cents, category_id, image_url, available, sort_order)
+    VALUES (@name, @description, @price, @price_cents, @category_id, @image_url, @available, @sort_order)
   `);
+  const priceCents = dollarsToCents(item.price);
   const result = stmt.run({
     name: item.name,
     description: item.description || '',
-    price: item.price,
+    price: centsToDollars(priceCents),
+    price_cents: priceCents,
     category_id: item.category_id || null,
     image_url: item.image_url || null,
     available: item.available !== undefined ? item.available : 1,
@@ -349,6 +296,12 @@ export function updateMenuItem(id, updates) {
   }
 
   if (Object.keys(filteredUpdates).length === 0) return null;
+
+  if (filteredUpdates.price !== undefined) {
+    const priceCents = dollarsToCents(filteredUpdates.price);
+    filteredUpdates.price = centsToDollars(priceCents);
+    filteredUpdates.price_cents = priceCents;
+  }
 
   const fields = Object.keys(filteredUpdates).map(k => `${k} = @${k}`).join(', ');
   const stmt = db.prepare(`UPDATE menu_items SET ${fields} WHERE id = @id`);
@@ -469,14 +422,17 @@ export function getModifierOptionByName(name) {
 
 export function createModifierOption(option) {
   const stmt = db.prepare(`
-    INSERT INTO modifier_options (group_id, name, display_name, price_adjustment, available, sort_order)
-    VALUES (@group_id, @name, @display_name, @price_adjustment, @available, @sort_order)
+    INSERT INTO modifier_options
+      (group_id, name, display_name, price_adjustment, price_adjustment_cents, available, sort_order)
+    VALUES (@group_id, @name, @display_name, @price_adjustment, @price_adjustment_cents, @available, @sort_order)
   `);
+  const adjustmentCents = dollarsToCents(option.price_adjustment);
   const result = stmt.run({
     group_id: option.group_id,
     name: option.name,
     display_name: option.display_name || option.name,
-    price_adjustment: option.price_adjustment || 0,
+    price_adjustment: centsToDollars(adjustmentCents),
+    price_adjustment_cents: adjustmentCents,
     available: option.available !== undefined ? option.available : 1,
     sort_order: option.sort_order || 0,
   });
@@ -493,6 +449,12 @@ export function updateModifierOption(id, updates) {
   }
 
   if (Object.keys(filteredUpdates).length === 0) return null;
+
+  if (filteredUpdates.price_adjustment !== undefined) {
+    const adjustmentCents = dollarsToCents(filteredUpdates.price_adjustment);
+    filteredUpdates.price_adjustment = centsToDollars(adjustmentCents);
+    filteredUpdates.price_adjustment_cents = adjustmentCents;
+  }
 
   const fields = Object.keys(filteredUpdates).map(k => `${k} = @${k}`).join(', ');
   const stmt = db.prepare(`UPDATE modifier_options SET ${fields} WHERE id = @id`);
@@ -589,13 +551,17 @@ export function getOrder(id) {
     WHERE oi.order_id = ?
   `).all(id);
 
-  return order;
+  return decorateOrder(order);
 }
 
 export function getActiveOrders() {
   const orders = db.prepare(`
     SELECT * FROM orders
     WHERE status IN ('pending', 'preparing', 'ready')
+      AND (
+        payment_status IN ('authorized', 'paid')
+        OR (payment_status = 'unpaid' AND payment_method = 'cash')
+      )
     ORDER BY
       CASE status
         WHEN 'pending' THEN 1
@@ -617,7 +583,7 @@ export function getActiveOrders() {
     order.items = getItems.all(order.id);
   }
 
-  return orders;
+  return orders.map(decorateOrder);
 }
 
 export function updateOrderStatus(id, status) {
@@ -629,35 +595,56 @@ export function updateOrderStatus(id, status) {
 // { ok: false, code, message, order } when the transition is not allowed.
 // `source` is 'customer' or 'staff'; customers can only cancel while pending,
 // staff may cancel any active order (pending | preparing | ready).
-export function cancelOrder(id, { reason = null, source = 'customer' } = {}) {
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
-  if (!order) return { ok: false, code: 'not_found', message: 'Order not found' };
+export function cancelOrder(id, { reason = null, source = 'customer', actorSubject = null } = {}) {
+  const cancel = db.transaction(() => {
+    const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+    if (!order) return { ok: false, code: 'not_found', message: 'Order not found' };
 
-  if (order.status === 'cancelled' || order.status === 'completed') {
-    return { ok: false, code: 'final_state', message: `Order is already ${order.status}`, order };
+    if (order.status === 'cancelled' || order.status === 'completed') {
+      return { ok: false, code: 'final_state', message: `Order is already ${order.status}`, order };
+    }
+
+    if (source === 'customer' && order.status !== 'pending') {
+      return {
+        ok: false,
+        code: 'too_late',
+        message: 'This order is already being prepared. Please come to the counter for help.',
+        order,
+      };
+    }
+
+    if (source !== 'customer' && source !== 'staff') {
+      return { ok: false, code: 'invalid_actor', message: 'Invalid cancellation actor', order };
+    }
+
+    const trimmedReason = typeof reason === 'string' ? reason.trim().slice(0, 500) : null;
+
+    db.prepare(`
+      UPDATE orders
+      SET status = 'cancelled',
+          cancellation_reason = ?,
+          cancelled_by = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(trimmedReason || null, source, id);
+
+    insertLifecycleEvent({
+      orderId: id,
+      fromStatus: order.status,
+      toStatus: 'cancelled',
+      actorType: source === 'staff' ? 'staff' : 'customer',
+      actorSubject,
+      metadata: { reason: trimmedReason || null },
+    });
+
+    return { ok: true, orderId: id };
+  });
+
+  const result = cancel();
+  if (!result.ok) {
+    return result.order ? { ...result, order: getOrder(id) } : result;
   }
-
-  if (source === 'customer' && order.status !== 'pending') {
-    return {
-      ok: false,
-      code: 'too_late',
-      message: 'This order is already being prepared. Please come to the counter for help.',
-      order,
-    };
-  }
-
-  const trimmedReason = typeof reason === 'string' ? reason.trim().slice(0, 500) : null;
-
-  db.prepare(`
-    UPDATE orders
-    SET status = 'cancelled',
-        cancellation_reason = ?,
-        cancelled_by = ?,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(trimmedReason || null, source, id);
-
-  return { ok: true, order: getOrder(id) };
+  return { ok: true, order: getOrder(result.orderId) };
 }
 
 // Returns ready-status orders whose 'ready' transition (updated_at) is at least
@@ -671,6 +658,8 @@ export function getOrdersAwaitingPickupReminder(minutesOld = 10) {
       AND email IS NOT NULL
       AND email != ''
       AND pickup_reminder_sent = 0
+      AND (payment_status IN ('authorized', 'paid')
+        OR (payment_status = 'unpaid' AND payment_method = 'cash'))
       AND updated_at <= datetime('now', ?)
   `).all(`-${minutesOld} minutes`);
 }
@@ -694,6 +683,283 @@ export function addOrderItemModifier(modifier) {
     VALUES (@order_item_id, @modifier_name, @price_adjustment)
   `);
   return stmt.run(modifier);
+}
+
+// ============ Revival order domain ==========
+
+function decorateOrder(order) {
+  if (!order) return null;
+
+  const subtotalCents = Number.isInteger(order.subtotal_cents)
+    ? order.subtotal_cents
+    : dollarsToCents(order.subtotal);
+  const taxCents = Number.isInteger(order.tax_cents)
+    ? order.tax_cents
+    : dollarsToCents(order.tax);
+  const totalCents = Number.isInteger(order.total_cents)
+    ? order.total_cents
+    : dollarsToCents(order.total);
+
+  order.subtotal_cents = subtotalCents;
+  order.tax_cents = taxCents;
+  order.total_cents = totalCents;
+  // Compatibility projections. Pricing decisions never use these decimals.
+  order.subtotal = centsToDollars(subtotalCents);
+  order.tax = centsToDollars(taxCents);
+  order.total = centsToDollars(totalCents);
+  if (Array.isArray(order.items)) {
+    order.items = order.items.map(item => {
+      const unitCents = Number.isInteger(item.unit_price_cents)
+        ? item.unit_price_cents
+        : dollarsToCents(item.unit_price);
+      const totalItemCents = Number.isInteger(item.total_price_cents)
+        ? item.total_price_cents
+        : dollarsToCents(item.total_price);
+      return {
+        ...item,
+        unit_price_cents: unitCents,
+        total_price_cents: totalItemCents,
+        unit_price: centsToDollars(unitCents),
+        total_price: centsToDollars(totalItemCents),
+      };
+    });
+  }
+  return order;
+}
+
+function loadOrderByInternalId(id) {
+  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+  if (!order) return null;
+  order.items = db.prepare(`
+    SELECT oi.*,
+      (SELECT GROUP_CONCAT(oim.modifier_name || CASE
+        WHEN oim.price_adjustment_cents != 0
+        THEN ' (' || CASE WHEN oim.price_adjustment_cents > 0 THEN '+$' ELSE '-$' END
+          || printf('%.2f', ABS(oim.price_adjustment_cents) / 100.0) || ')'
+        ELSE '' END, ', ')
+       FROM order_item_modifiers oim WHERE oim.order_item_id = oi.id) as modifiers
+    FROM order_items oi
+    WHERE oi.order_id = ?
+    ORDER BY oi.id
+  `).all(id);
+  return decorateOrder(order);
+}
+
+export function getOrderByPublicId(publicId) {
+  const order = db.prepare('SELECT id FROM orders WHERE public_id = ?').get(publicId);
+  return order ? loadOrderByInternalId(order.id) : null;
+}
+
+export function getOrderForCustomer(publicId, customerId) {
+  const order = db.prepare(
+    'SELECT id FROM orders WHERE public_id = ? AND customer_id = ?',
+  ).get(publicId, customerId);
+  return order ? loadOrderByInternalId(order.id) : null;
+}
+
+export function getOrderByIdempotency(customerId, idempotencyKey) {
+  const order = db.prepare(
+    'SELECT id FROM orders WHERE customer_id = ? AND idempotency_key = ?',
+  ).get(customerId, idempotencyKey);
+  return order ? loadOrderByInternalId(order.id) : null;
+}
+
+export function getCustomerBySubject(subject) {
+  return db.prepare('SELECT * FROM customers WHERE upstream_subject = ?').get(subject) || null;
+}
+
+export function getOrCreateCustomer(subject) {
+  if (!subject || typeof subject !== 'string') {
+    throw new Error('A verified customer subject is required');
+  }
+  const existing = getCustomerBySubject(subject);
+  if (existing) return existing;
+
+  const customer = { id: crypto.randomUUID(), upstream_subject: subject };
+  try {
+    db.prepare(`
+      INSERT INTO customers (id, upstream_subject) VALUES (?, ?)
+    `).run(customer.id, customer.upstream_subject);
+    return customer;
+  } catch (error) {
+    // A concurrent request may have inserted the same upstream subject.
+    if (String(error.code || '').startsWith('SQLITE_CONSTRAINT')) {
+      const raced = getCustomerBySubject(subject);
+      if (raced) return raced;
+    }
+    throw error;
+  }
+}
+
+function insertLifecycleEvent({ orderId, fromStatus = null, toStatus, actorType, actorSubject = null, metadata = null }) {
+  db.prepare(`
+    INSERT INTO order_lifecycle_events
+      (id, order_id, from_status, to_status, actor_type, actor_subject, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    crypto.randomUUID(),
+    orderId,
+    fromStatus,
+    toStatus,
+    actorType,
+    actorSubject,
+    metadata ? JSON.stringify(metadata) : null,
+  );
+}
+
+/**
+ * Creates an order, its line items, modifiers, and initial lifecycle event in
+ * one SQLite transaction. The caller must provide server-verified cents and
+ * product snapshots; this function intentionally has no client-price path.
+ */
+export function createOrderWithItems({
+  customerId,
+  idempotencyKey,
+  requestHash,
+  customerName,
+  email = null,
+  notes = null,
+  subtotalCents,
+  taxCents,
+  totalCents,
+  items,
+  actorSubject = null,
+  paymentStatus = 'unpaid',
+  paymentMethod = LEGACY_CASH_PAYMENT_METHOD,
+}) {
+  const create = db.transaction(() => {
+    const pickupNumber = getNextPickupNumber();
+    const publicId = crypto.randomUUID();
+    const result = db.prepare(`
+      INSERT INTO orders (
+        public_id, customer_id, idempotency_key, request_hash,
+        pickup_number, customer_name, email, status,
+      subtotal, tax, total, subtotal_cents, tax_cents, total_cents,
+        notes, payment_status, payment_method
+      ) VALUES (
+        @public_id, @customer_id, @idempotency_key, @request_hash,
+        @pickup_number, @customer_name, @email, 'pending',
+        @subtotal, @tax, @total, @subtotal_cents, @tax_cents, @total_cents,
+        @notes, @payment_status, @payment_method
+      )
+    `).run({
+      public_id: publicId,
+      customer_id: customerId,
+      idempotency_key: idempotencyKey,
+      request_hash: requestHash,
+      pickup_number: pickupNumber,
+      customer_name: customerName,
+      email,
+      subtotal: centsToDollars(subtotalCents),
+      tax: centsToDollars(taxCents),
+      total: centsToDollars(totalCents),
+      subtotal_cents: subtotalCents,
+      tax_cents: taxCents,
+      total_cents: totalCents,
+      notes,
+      payment_status: paymentStatus,
+      payment_method: paymentMethod,
+    });
+    const orderId = Number(result.lastInsertRowid);
+
+    const insertItem = db.prepare(`
+      INSERT INTO order_items (
+        order_id, menu_item_id, item_name, quantity,
+        unit_price, total_price, unit_price_cents, total_price_cents,
+        special_instructions
+      ) VALUES (
+        @order_id, @menu_item_id, @item_name, @quantity,
+        @unit_price, @total_price, @unit_price_cents, @total_price_cents,
+        @special_instructions
+      )
+    `);
+    const insertModifier = db.prepare(`
+      INSERT INTO order_item_modifiers (
+        order_item_id, modifier_option_id, modifier_name,
+        price_adjustment, price_adjustment_cents
+      ) VALUES (
+        @order_item_id, @modifier_option_id, @modifier_name,
+        @price_adjustment, @price_adjustment_cents
+      )
+    `);
+
+    for (const item of items) {
+      const itemResult = insertItem.run({
+        order_id: orderId,
+        menu_item_id: item.menuItemId,
+        item_name: item.itemName,
+        quantity: item.quantity,
+        unit_price: centsToDollars(item.unitPriceCents),
+        total_price: centsToDollars(item.totalPriceCents),
+        unit_price_cents: item.unitPriceCents,
+        total_price_cents: item.totalPriceCents,
+        special_instructions: item.specialInstructions || null,
+      });
+      const orderItemId = Number(itemResult.lastInsertRowid);
+      for (const modifier of item.modifiers) {
+        insertModifier.run({
+          order_item_id: orderItemId,
+          modifier_option_id: modifier.modifierOptionId,
+          modifier_name: modifier.name,
+          price_adjustment: centsToDollars(modifier.priceAdjustmentCents),
+          price_adjustment_cents: modifier.priceAdjustmentCents,
+        });
+      }
+    }
+
+    insertLifecycleEvent({
+      orderId,
+      toStatus: 'pending',
+      actorType: 'customer',
+      actorSubject,
+      metadata: { payment_status: paymentStatus, payment_method: paymentMethod },
+    });
+    return { id: orderId, public_id: publicId, pickup_number: pickupNumber };
+  });
+
+  const created = create();
+  return {
+    ...created,
+    order: loadOrderByInternalId(created.id),
+  };
+}
+
+export function transitionOrderStatus(id, status, { actorType = 'staff', actorSubject = null } = {}) {
+  const transition = db.transaction(() => {
+    const current = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+    if (!current) return { ok: false, code: 'not_found', message: 'Order not found' };
+    const expectedNext = LEGAL_STATUS_TRANSITIONS[current.status];
+    if (expectedNext !== status) {
+      return {
+        ok: false,
+        code: current.status === status ? 'already_in_state' : 'invalid_transition',
+        message: current.status === status
+          ? `Order is already ${status}`
+          : `Cannot move order from ${current.status} to ${status}`,
+        order: loadOrderByInternalId(id),
+      };
+    }
+    if (!isPaymentFulfillmentEligible(current)) {
+      return {
+        ok: false,
+        code: 'payment_required',
+        message: 'Payment must be authorized before fulfillment can begin',
+        order: loadOrderByInternalId(id),
+      };
+    }
+    db.prepare(
+      'UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    ).run(status, id);
+    insertLifecycleEvent({
+      orderId: id,
+      fromStatus: current.status,
+      toStatus: status,
+      actorType,
+      actorSubject,
+    });
+    return { ok: true, order: loadOrderByInternalId(id) };
+  });
+  return transition();
 }
 
 export function getOrderHistory({ page = 1, limit = 20, status = null, startDate = null, endDate = null, search = null } = {}) {

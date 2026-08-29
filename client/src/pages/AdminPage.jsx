@@ -36,7 +36,7 @@ import {
   User,
   ImageIcon,
 } from 'lucide-react';
-import { adminAPI, menuAPI, isAuthenticated as checkAuth } from '../utils/api';
+import { adminAPI, isAuthenticated as checkAuth } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
 import PinEntry from '../components/PinEntry';
 
@@ -2265,7 +2265,7 @@ function BackupSection() {
     setMessage(null);
 
     try {
-      const result = await adminAPI.restoreBackup(filename);
+      await adminAPI.restoreBackup(filename);
       setMessage(`Database restored from ${filename}. You may need to refresh the page.`);
       loadBackups();
     } catch (err) {

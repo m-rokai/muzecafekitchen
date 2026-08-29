@@ -3,16 +3,14 @@ import { z } from 'zod';
 // ============ Order Validation ============
 
 const OrderItemModifierSchema = z.object({
-  modifier_name: z.string().min(1).max(100),
-  price_adjustment: z.number().default(0),
+  // IDs are validated against the item/group graph on the server. Names and
+  // prices from the browser are never used as authority.
+  modifier_option_id: z.number().int().positive('Modifier option ID is required'),
 });
 
 const OrderItemSchema = z.object({
-  menu_item_id: z.number().int().positive().optional(),
-  item_name: z.string().min(1).max(100),
+  menu_item_id: z.number().int().positive('Menu item ID is required'),
   quantity: z.number().int().min(1).max(100),
-  unit_price: z.number().min(0),
-  total_price: z.number().min(0),
   special_instructions: z.string().max(500).nullable().optional(),
   modifiers: z.array(OrderItemModifierSchema).max(20).default([]),
 });
@@ -21,9 +19,6 @@ const OrderCreationSchema = z.object({
   customerName: z.string().min(1, 'Customer name is required').max(100),
   email: z.string().email().max(254).nullable().optional(),
   items: z.array(OrderItemSchema).min(1, 'Order must have at least one item').max(50),
-  subtotal: z.number().min(0),
-  tax: z.number().min(0),
-  total: z.number().min(0),
   notes: z.string().max(500).optional(),
 });
 

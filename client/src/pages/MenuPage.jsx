@@ -145,7 +145,7 @@ export default function MenuPage() {
       {/* Active Order Banner — kept lightweight, sits above the hero */}
       {activeOrder && (
         <Link
-          to={`/confirmation/${activeOrder.id}`}
+          to={`/confirmation/${activeOrder.public_id}`}
           className="block bg-muze-dark text-muze-gold px-4 py-3 sticky top-0 z-50 shadow-md"
         >
           <div className="max-w-3xl mx-auto flex items-center justify-between">

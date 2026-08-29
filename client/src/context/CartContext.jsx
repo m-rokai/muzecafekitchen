@@ -166,6 +166,8 @@ export function CartProvider({ children }) {
   );
 }
 
+// The provider and hook intentionally share this module for the existing API.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useCart() {
   const context = useContext(CartContext);
   if (!context) {

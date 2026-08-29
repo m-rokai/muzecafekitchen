@@ -7,11 +7,14 @@ import LiquidGlass from 'liquid-glass-react';
 // only when `liquid` is requested (good for small accent pills/buttons).
 
 function usePrefersReducedMotion() {
-  const [reduced, setReduced] = useState(false);
+  const [reduced, setReduced] = useState(() => (
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false
+  ));
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setReduced(mq.matches);
     const handler = (e) => setReduced(e.matches);
     mq.addEventListener?.('change', handler);
     return () => mq.removeEventListener?.('change', handler);

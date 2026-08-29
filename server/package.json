@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "test": "DATABASE_PATH=:memory: node --test"
   },
   "dependencies": {
     "better-sqlite3": "^11.6.0",

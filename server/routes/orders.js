@@ -1,173 +1,182 @@
 import express from 'express';
 import * as db from '../db/database.js';
-import { requireAuth } from '../middleware/auth.js';
+import {
+  optionalAuth,
+  requireAuth,
+  requireCustomerIdentity,
+} from '../middleware/auth.js';
 import { orderRateLimit } from '../middleware/rateLimit.js';
 import { validateOrderCreation, validateOrderStatus } from '../validators/schemas.js';
-import { sanitizeOrderData, sanitizeName, sanitizeText } from '../utils/sanitize.js';
+import { sanitizeOrderData, sanitizeText } from '../utils/sanitize.js';
 import { sendOrderConfirmation, sendOrderReadyNotification, sendOrderCancellation } from '../services/email.js';
 import { schedulePickupReminderAfterReady } from '../services/pickupReminder.js';
+import {
+  OrderPricingError,
+  hashOrderRequest,
+  normalizeOrderRequest,
+  validateAndPriceOrder,
+} from '../services/orderPricing.js';
 
 const router = express.Router();
+const PUBLIC_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 
-// Create new order - with rate limiting and validation
-router.post('/', orderRateLimit, (req, res) => {
+function publicIdFromRequest(req, res) {
+  const publicId = req.params.id;
+  if (!PUBLIC_ID_PATTERN.test(publicId || '')) {
+    res.status(404).json({ message: 'Order not found' });
+    return null;
+  }
+  return publicId;
+}
+
+function actorSubject(req) {
+  return req.auth?.sub || req.auth?.subject || null;
+}
+
+function customerOrderView(order) {
+  if (!order) return null;
+  const {
+    id,
+    customer_id: customerId,
+    idempotency_key: idempotencyKey,
+    request_hash: requestHash,
+    ...safeOrder
+  } = order;
+  safeOrder.items = (order.items || []).map((item) => {
+    const { id: itemId, order_id: orderId, ...safeItem } = item;
+    return safeItem;
+  });
+  return safeOrder;
+}
+
+function emitOrderChange(req, order, eventName = 'order-updated') {
+  const io = req.app.get('io');
+  if (!io || !order) return;
+  // All sockets are authenticated staff sockets. Customer status refreshes use
+  // the ownership-checked HTTP endpoint instead of a global broadcast.
+  io.to('staff').emit(eventName, order);
+}
+
+async function requireCustomerOrStaff(req, res, next) {
+  if (req.auth?.role === 'admin') return next();
+  return requireCustomerIdentity(req, res, next);
+}
+
+// Create an order. Identity, idempotency, product availability, modifier
+// cardinality, and all money values are server-authoritative.
+router.post('/', orderRateLimit, requireCustomerIdentity, (req, res) => {
   try {
-    // Step 0: Refuse new orders if the kitchen is closed
     if (db.getSetting('kitchen_open') === 'false') {
       const message = db.getSetting('kitchen_closed_message')
         || 'Online ordering is temporarily paused. Please try again soon.';
       return res.status(503).json({ message, kitchenClosed: true });
     }
 
-    // Step 1: Validate input structure with Zod
     const validation = validateOrderCreation(req.body);
     if (!validation.success) {
-      return res.status(400).json({
-        message: 'Invalid order data',
-        errors: validation.errors,
-      });
+      return res.status(400).json({ message: 'Invalid order data', errors: validation.errors });
     }
 
-    // Step 2: Sanitize all user inputs
-    const sanitized = sanitizeOrderData(req.body);
-    const { customerName, email, items, notes } = sanitized;
-
-    if (!customerName || !items || items.length === 0) {
+    const sanitized = sanitizeOrderData(validation.data);
+    if (!sanitized.customerName || sanitized.items.length === 0) {
       return res.status(400).json({ message: 'Customer name and items are required' });
     }
 
-    // ============ SERVER-SIDE PRICE VERIFICATION ============
-    // Recalculate all prices from database to prevent price manipulation
-    let verifiedSubtotal = 0;
-    const verifiedItems = [];
-
-    for (const item of items) {
-      const quantity = item.quantity || 1;
-
-      // Get verified item price from database
-      let verifiedUnitPrice = 0;
-      let itemName = item.item_name;
-
-      if (item.menu_item_id) {
-        const menuItem = db.getMenuItem(item.menu_item_id);
-        if (menuItem) {
-          verifiedUnitPrice = menuItem.price;
-          itemName = menuItem.name; // Use database name
-        } else {
-          console.warn(`Menu item ${item.menu_item_id} not found, using client price`);
-          verifiedUnitPrice = item.unit_price || 0;
-        }
-      } else {
-        // No menu_item_id, use client price (could be custom item)
-        verifiedUnitPrice = item.unit_price || 0;
-      }
-
-      // Verify modifier prices
-      let modifierTotal = 0;
-      const verifiedModifiers = [];
-
-      if (item.modifiers && item.modifiers.length > 0) {
-        for (const mod of item.modifiers) {
-          // Look up modifier price in database
-          const dbModifier = db.getModifierOptionByName(mod.modifier_name);
-          const verifiedPriceAdjustment = dbModifier
-            ? dbModifier.price_adjustment
-            : mod.price_adjustment || 0;
-
-          if (!dbModifier) {
-            console.warn(`Modifier "${mod.modifier_name}" not found in database, using client price`);
-          }
-
-          modifierTotal += verifiedPriceAdjustment;
-          verifiedModifiers.push({
-            modifier_name: mod.modifier_name,
-            price_adjustment: verifiedPriceAdjustment,
-          });
-        }
-      }
-
-      // Calculate verified item total
-      const verifiedItemTotal = (verifiedUnitPrice + modifierTotal) * quantity;
-      verifiedSubtotal += verifiedItemTotal;
-
-      verifiedItems.push({
-        menu_item_id: item.menu_item_id || null,
-        item_name: itemName,
-        quantity,
-        unit_price: verifiedUnitPrice,
-        total_price: verifiedItemTotal,
-        special_instructions: item.special_instructions || null,
-        modifiers: verifiedModifiers,
+    const idempotencyKey = req.get('Idempotency-Key');
+    if (!IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey || '')) {
+      return res.status(400).json({
+        message: 'A valid Idempotency-Key header is required',
+        code: 'IDEMPOTENCY_KEY_REQUIRED',
       });
     }
 
-    // Get tax rate from settings and calculate tax
-    const taxRateSetting = db.getSetting('tax_rate');
-    const taxRate = taxRateSetting ? parseFloat(taxRateSetting) : 0.0825;
-    const verifiedTax = verifiedSubtotal * taxRate;
-    const verifiedTotal = verifiedSubtotal + verifiedTax;
-
-    // Create order with verified prices
-    const { id: orderId, pickup_number } = db.createOrder({
-      customer_name: customerName,
-      email: email || null,
-      subtotal: verifiedSubtotal,
-      tax: verifiedTax,
-      total: verifiedTotal,
-      notes: notes || null,
-    });
-
-    // Add order items with verified prices
-    for (const item of verifiedItems) {
-      const orderItemId = db.addOrderItem({
-        order_id: orderId,
-        menu_item_id: item.menu_item_id,
-        item_name: item.item_name,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        total_price: item.total_price,
-        special_instructions: item.special_instructions,
+    const customer = db.getOrCreateCustomer(req.customerIdentity.subject);
+    // Resolve idempotency against the canonical request body before touching
+    // the live catalog. Exact retries remain replayable after a menu change;
+    // a changed body still conflicts without leaking catalog details.
+    const requestHash = hashOrderRequest(normalizeOrderRequest(sanitized));
+    const existing = db.getOrderByIdempotency(customer.id, idempotencyKey);
+    if (existing) {
+      if (existing.request_hash !== requestHash) {
+        return res.status(409).json({
+          message: 'This idempotency key was already used with a different order payload',
+          code: 'IDEMPOTENCY_KEY_CONFLICT',
+        });
+      }
+      return res.status(200).json({
+        id: existing.public_id,
+        public_id: existing.public_id,
+        pickup_number: existing.pickup_number,
+        message: 'Order already created',
+        replayed: true,
       });
+    }
 
-      // Add modifiers with verified prices
-      if (item.modifiers && item.modifiers.length > 0) {
-        for (const mod of item.modifiers) {
-          db.addOrderItemModifier({
-            order_item_id: orderItemId,
-            modifier_name: mod.modifier_name,
-            price_adjustment: mod.price_adjustment,
+    const pricing = validateAndPriceOrder(sanitized, db);
+
+    let created;
+    try {
+      created = db.createOrderWithItems({
+        customerId: customer.id,
+        idempotencyKey,
+        requestHash: pricing.requestHash,
+        customerName: sanitized.customerName,
+        email: sanitized.email,
+        notes: sanitized.notes,
+        subtotalCents: pricing.subtotalCents,
+        taxCents: pricing.taxCents,
+        totalCents: pricing.totalCents,
+        items: pricing.items,
+        actorSubject: req.customerIdentity.subject,
+      });
+    } catch (error) {
+      // A concurrent request can win the UNIQUE(customer_id, key) race.
+      if (String(error.code || '').includes('SQLITE_CONSTRAINT')) {
+        const raced = db.getOrderByIdempotency(customer.id, idempotencyKey);
+        if (raced && raced.request_hash === requestHash) {
+          return res.status(200).json({
+            id: raced.public_id,
+            public_id: raced.public_id,
+            pickup_number: raced.pickup_number,
+            message: 'Order already created',
+            replayed: true,
+          });
+        }
+        if (raced) {
+          return res.status(409).json({
+            message: 'This idempotency key was already used with a different order payload',
+            code: 'IDEMPOTENCY_KEY_CONFLICT',
           });
         }
       }
+      throw error;
     }
 
-    // Get the complete order
-    const order = db.getOrder(orderId);
-
-    // Emit to kitchen display
-    const io = req.app.get('io');
-    if (io) {
-      console.log('📤 Emitting new-order to kitchen:', order.id, order.customer_name);
-      io.emit('new-order', order);
-    } else {
-      console.log('⚠️ Socket.io not available');
-    }
-
-    // Send confirmation email (async, don't block response)
-    if (order.email) {
-      sendOrderConfirmation(order).catch(err => {
+    emitOrderChange(req, created.order, 'new-order');
+    if (created.order.email) {
+      sendOrderConfirmation(created.order).catch(err => {
         console.error('Failed to send confirmation email:', err);
       });
     }
 
-    res.status(201).json({
-      id: orderId,
-      pickup_number,
+    return res.status(201).json({
+      id: created.public_id,
+      public_id: created.public_id,
+      pickup_number: created.pickup_number,
       message: 'Order created successfully',
+      replayed: false,
     });
   } catch (err) {
+    if (err instanceof OrderPricingError) {
+      return res.status(err.status || 400).json({
+        message: err.message,
+        code: err.code,
+        errors: err.details,
+      });
+    }
     console.error('Error creating order:', err);
-    res.status(500).json({ message: 'Failed to create order' });
+    return res.status(500).json({ message: 'Failed to create order' });
   }
 });
 
@@ -191,162 +200,126 @@ router.patch('/kitchen-status', requireAuth, (req, res) => {
       return res.status(400).json({ message: '`open` must be a boolean' });
     }
     db.setSetting('kitchen_open', open ? 'true' : 'false');
-    if (typeof message === 'string') {
-      // Cap to 200 chars to keep banners readable
-      db.setSetting('kitchen_closed_message', message.slice(0, 200));
-    }
+    if (typeof message === 'string') db.setSetting('kitchen_closed_message', message.slice(0, 200));
     const status = {
       open,
       message: open ? '' : (db.getSetting('kitchen_closed_message') || ''),
     };
-
     const io = req.app.get('io');
-    if (io) {
-      console.log(`📤 Emitting kitchen-status: ${open ? 'OPEN' : 'CLOSED'}`);
-      io.emit('kitchen-status', status);
-    }
-
-    res.json({ message: 'Kitchen status updated', ...status });
+    if (io) io.to('staff').emit('kitchen-status', status);
+    return res.json({ message: 'Kitchen status updated', ...status });
   } catch (err) {
     console.error('Error setting kitchen status:', err);
-    res.status(500).json({ message: 'Failed to update kitchen status' });
+    return res.status(500).json({ message: 'Failed to update kitchen status' });
   }
 });
 
-// Get active orders (for kitchen display) - MUST be before /:id route
-// Requires authentication - kitchen staff only
+// Active orders are a staff-only HTTP surface.
 router.get('/active', requireAuth, (req, res) => {
   try {
-    const orders = db.getActiveOrders();
-    res.json(orders);
+    return res.json(db.getActiveOrders());
   } catch (err) {
     console.error('Error getting active orders:', err);
-    res.status(500).json({ message: 'Failed to load orders' });
+    return res.status(500).json({ message: 'Failed to load orders' });
   }
 });
 
-// Get order by ID
-router.get('/:id', (req, res) => {
+// Customer-owned order view. Staff may use the same endpoint with its JWT;
+// customers must present the verified upstream subject used at checkout.
+router.get('/:id', optionalAuth, requireCustomerOrStaff, (req, res) => {
   try {
-    const order = db.getOrder(parseInt(req.params.id));
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
+    const publicId = publicIdFromRequest(req, res);
+    if (!publicId) return undefined;
+
+    const order = db.getOrderByPublicId(publicId);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (req.auth?.role !== 'admin') {
+      const customer = db.getCustomerBySubject(req.customerIdentity.subject);
+      if (!customer || customer.id !== order.customer_id) {
+        return res.status(404).json({ message: 'Order not found' });
+      }
     }
-    res.json(order);
+    return res.json(req.auth?.role === 'admin' ? order : customerOrderView(order));
   } catch (err) {
     console.error('Error getting order:', err);
-    res.status(500).json({ message: 'Failed to load order' });
+    return res.status(500).json({ message: 'Failed to load order' });
   }
 });
 
-// Update order status - requires authentication (kitchen staff only).
-// Staff-initiated cancellation routes through cancelOrder() so the reason +
-// cancelled_by are persisted; other transitions use updateOrderStatus().
+// Staff-only lifecycle transition. The public UUID is resolved to the
+// private numeric row id only inside the server.
 router.patch('/:id/status', requireAuth, (req, res) => {
   try {
-    // Validate status input
+    const publicId = publicIdFromRequest(req, res);
+    if (!publicId) return undefined;
     const validation = validateOrderStatus(req.body);
     if (!validation.success) {
-      return res.status(400).json({
-        message: 'Invalid status',
-        errors: validation.errors,
-      });
+      return res.status(400).json({ message: 'Invalid status', errors: validation.errors });
     }
-
-    const { status } = validation.data;
+    const existing = db.getOrderByPublicId(publicId);
+    if (!existing) return res.status(404).json({ message: 'Order not found' });
     const reason = typeof req.body.reason === 'string' ? sanitizeText(req.body.reason, 500) : null;
-    const orderId = parseInt(req.params.id);
-
-    let order;
-    if (status === 'cancelled') {
-      const result = db.cancelOrder(orderId, { reason, source: 'staff' });
-      if (!result.ok) {
-        const httpCode = result.code === 'not_found' ? 404 : 409;
-        return res.status(httpCode).json({ message: result.message, code: result.code });
-      }
-      order = result.order;
+    let result;
+    if (validation.data.status === 'cancelled') {
+      result = db.cancelOrder(existing.id, {
+        reason,
+        source: 'staff',
+        actorSubject: actorSubject(req),
+      });
     } else {
-      db.updateOrderStatus(orderId, status);
-      order = db.getOrder(orderId);
-    }
-
-    // Emit update to all clients
-    const io = req.app.get('io');
-    if (io) {
-      io.emit('order-updated', order);
-    }
-
-    // Send email notification when order is ready, and arm the 10-minute
-    // pickup reminder. The reminder is a no-op if the order moves to
-    // completed or cancelled before it fires.
-    if (status === 'ready') {
-      if (order.email) {
-        sendOrderReadyNotification(order).catch(err => {
-          console.error('Failed to send ready notification email:', err);
-        });
-      }
-      schedulePickupReminderAfterReady(orderId, req.app.get('io'));
-    }
-
-    if (status === 'cancelled' && order.email) {
-      sendOrderCancellation(order).catch(err => {
-        console.error('Failed to send cancellation email:', err);
+      result = db.transitionOrderStatus(existing.id, validation.data.status, {
+        actorType: 'staff',
+        actorSubject: actorSubject(req),
       });
     }
-
-    res.json({ message: 'Status updated', order });
+    if (!result.ok) {
+      const status = result.code === 'not_found' ? 404 : 409;
+      return res.status(status).json({
+        message: result.message,
+        code: result.code,
+        order: req.auth?.role === 'admin' ? result.order : customerOrderView(result.order),
+      });
+    }
+    const order = result.order;
+    emitOrderChange(req, order);
+    if (validation.data.status === 'ready') {
+      if (order.email) sendOrderReadyNotification(order).catch(err => console.error('Failed to send ready notification email:', err));
+      schedulePickupReminderAfterReady(order.id, req.app.get('io'));
+    }
+    if (validation.data.status === 'cancelled' && order.email) {
+      sendOrderCancellation(order).catch(err => console.error('Failed to send cancellation email:', err));
+    }
+    return res.json({ message: 'Status updated', order });
   } catch (err) {
     console.error('Error updating status:', err);
-    res.status(500).json({ message: 'Failed to update status' });
+    return res.status(500).json({ message: 'Failed to update status' });
   }
 });
 
-// Customer-initiated cancellation. Public route — bearer credential is
-// possession of the order id (same trust model as GET /orders/:id). Only
-// permitted while status is 'pending'; once the kitchen starts the order
-// the customer is told to come to the counter.
-router.patch('/:id/cancel', (req, res) => {
+// Customer cancellation requires ownership and remains pending-only.
+router.patch('/:id/cancel', requireCustomerIdentity, (req, res) => {
   try {
-    const orderId = parseInt(req.params.id);
-    if (!Number.isInteger(orderId) || orderId <= 0) {
-      return res.status(400).json({ message: 'Invalid order id' });
-    }
-
-    const reason = typeof req.body?.reason === 'string'
-      ? sanitizeText(req.body.reason, 500)
-      : null;
-
-    const result = db.cancelOrder(orderId, { reason, source: 'customer' });
+    const publicId = publicIdFromRequest(req, res);
+    if (!publicId) return undefined;
+    const customer = db.getCustomerBySubject(req.customerIdentity.subject);
+    const order = customer ? db.getOrderForCustomer(publicId, customer.id) : null;
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    const reason = typeof req.body?.reason === 'string' ? sanitizeText(req.body.reason, 500) : null;
+    const result = db.cancelOrder(order.id, {
+      reason,
+      source: 'customer',
+      actorSubject: req.customerIdentity.subject,
+    });
     if (!result.ok) {
-      const httpCode = result.code === 'not_found' ? 404
-        : result.code === 'too_late' ? 409
-        : result.code === 'final_state' ? 409
-        : 400;
-      return res.status(httpCode).json({
-        message: result.message,
-        code: result.code,
-        order: result.order,
-      });
+      const status = result.code === 'not_found' ? 404 : result.code === 'too_late' || result.code === 'final_state' ? 409 : 400;
+      return res.status(status).json({ message: result.message, code: result.code, order: result.order });
     }
-
-    const order = result.order;
-
-    const io = req.app.get('io');
-    if (io) {
-      console.log('📤 Customer cancelled order', order.id);
-      io.emit('order-updated', order);
-    }
-
-    if (order.email) {
-      sendOrderCancellation(order).catch(err => {
-        console.error('Failed to send cancellation email:', err);
-      });
-    }
-
-    res.json({ message: 'Order cancelled', order });
+    emitOrderChange(req, result.order);
+    if (result.order.email) sendOrderCancellation(result.order).catch(err => console.error('Failed to send cancellation email:', err));
+    return res.json({ message: 'Order cancelled', order: customerOrderView(result.order) });
   } catch (err) {
     console.error('Error cancelling order:', err);
-    res.status(500).json({ message: 'Failed to cancel order' });
+    return res.status(500).json({ message: 'Failed to cancel order' });
   }
 });
 

@@ -23,7 +23,7 @@ export default function PinEntry({ onSuccess, title = 'Staff Access' }) {
         // Token is automatically stored by adminAPI.verifyPin
         onSuccess();
       }
-    } catch (err) {
+    } catch {
       setError('Invalid PIN. Please try again.');
       setPin('');
     } finally {

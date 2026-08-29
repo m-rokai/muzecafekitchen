@@ -104,19 +104,14 @@ export function sanitizeOrderData(orderData) {
     customerName: orderData.customerName ? sanitizeName(orderData.customerName) : null,
     email: orderData.email ? sanitizeEmail(orderData.email) : null,
     notes: sanitizeText(orderData.notes),
-    subtotal: sanitizePrice(orderData.subtotal),
-    tax: sanitizePrice(orderData.tax),
-    total: sanitizePrice(orderData.total),
     items: (orderData.items || []).map(item => ({
       menu_item_id: item.menu_item_id ? sanitizeInteger(item.menu_item_id, 1) : null,
-      item_name: sanitizeMenuItemName(item.item_name) || 'Unknown Item',
       quantity: sanitizeInteger(item.quantity, 1, 100),
-      unit_price: sanitizePrice(item.unit_price),
-      total_price: sanitizePrice(item.total_price),
       special_instructions: sanitizeInstructions(item.special_instructions),
       modifiers: (item.modifiers || []).map(mod => ({
-        modifier_name: sanitizeMenuItemName(mod.modifier_name) || 'Unknown',
-        price_adjustment: sanitizePrice(mod.price_adjustment),
+        modifier_option_id: mod.modifier_option_id
+          ? sanitizeInteger(mod.modifier_option_id, 1)
+          : null,
       })),
     })),
   };

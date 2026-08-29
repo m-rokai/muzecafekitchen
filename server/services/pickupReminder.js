@@ -36,7 +36,10 @@ async function sendReminderIfDue(orderId, io) {
 
   try {
     await sendPickupReminder(order);
-    if (io) io.emit('order-updated', db.getOrder(orderId));
+    if (io) {
+      const order = db.getOrder(orderId);
+      io.to('staff').emit('order-updated', order);
+    }
   } catch (err) {
     console.error(`Pickup reminder failed for order ${orderId}:`, err);
   }

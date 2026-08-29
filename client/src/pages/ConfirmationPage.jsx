@@ -1,15 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
-import { CheckCircle, Clock, Coffee, ArrowLeft, Loader2, WifiOff, Laptop, XCircle } from 'lucide-react';
+import { CheckCircle, Clock, Coffee, ArrowLeft, Loader2, Laptop, XCircle } from 'lucide-react';
 import { orderAPI } from '../utils/api';
 import { formatPriceFromDollars, formatPickupNumber, formatTime } from '../utils/formatters';
 import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
 import CancelReasonModal from '../components/CancelReasonModal';
-
-const SOCKET_URL = import.meta.env.VITE_WS_URL ||
-  (import.meta.env.PROD ? window.location.origin : 'http://localhost:3001');
 
 export default function ConfirmationPage() {
   const { orderId } = useParams();
@@ -17,12 +13,8 @@ export default function ConfirmationPage() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [connected, setConnected] = useState(false);
-  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelNotice, setCancelNotice] = useState(null);
-  const socketRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
 
   async function handleCustomerCancel(reason) {
     const result = await orderAPI.cancel(orderId, reason);
@@ -33,50 +25,15 @@ export default function ConfirmationPage() {
 
   useEffect(() => {
     loadOrder();
-
-    function connectSocket() {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
-      if (socketRef.current) socketRef.current.disconnect();
-
-      socketRef.current = io(SOCKET_URL, {
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 10000,
-        reconnectionAttempts: 10,
-        timeout: 10000,
-      });
-
-      socketRef.current.on('connect', () => {
-        setConnected(true);
-        setReconnectAttempt(0);
-        loadOrder();
-      });
-      socketRef.current.on('disconnect', () => setConnected(false));
-      socketRef.current.on('connect_error', () => setConnected(false));
-      socketRef.current.on('order-updated', (updatedOrder) => {
-        if (updatedOrder.id === parseInt(orderId)) {
-          setOrder(updatedOrder);
-          if (updatedOrder.status === 'completed' || updatedOrder.status === 'cancelled') {
-            localStorage.removeItem('muze_last_order');
-          }
-        }
-      });
-    }
-
-    connectSocket();
-    return () => {
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      socketRef.current?.disconnect();
-    };
+    const poll = setInterval(loadOrder, 10000);
+    return () => clearInterval(poll);
   }, [orderId]);
 
   async function loadOrder() {
     try {
       const data = await orderAPI.get(orderId);
       setOrder(data);
+      setError(null);
       if (data.status === 'completed' || data.status === 'cancelled') {
         localStorage.removeItem('muze_last_order');
       }
@@ -161,22 +118,9 @@ export default function ConfirmationPage() {
           </div>
           <p className="text-muze-dark/70 mt-3 text-sm">{status.description}</p>
 
-          {/* Live updates indicator */}
-          <div className={`inline-flex items-center gap-2 mt-5 text-xs ${connected ? 'text-green-700' : 'text-muze-dark/40'}`}>
-            {connected ? (
-              <>
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-                </span>
-                Live updates active
-              </>
-            ) : (
-              <>
-                <WifiOff className="w-3 h-3 animate-pulse" />
-                {reconnectAttempt > 0 ? `Reconnecting (${reconnectAttempt})…` : 'Reconnecting…'}
-              </>
-            )}
+          {/* Status is refreshed over the ownership-checked HTTP endpoint. */}
+          <div className="inline-flex items-center gap-2 mt-5 text-xs text-muze-dark/40">
+            Status refreshes automatically
           </div>
         </GlassPanel>
 

@@ -1,11 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import Database from 'better-sqlite3';
+import {
+  backupDatabase,
+  checkDatabaseIntegrity,
+  getDatabasePath,
+} from '../db/database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const BACKUP_DIR = path.join(__dirname, '../backups');
-const DB_PATH = path.join(__dirname, '../db/muze_orders.db');
+const BACKUP_FILENAME_PATTERN = /^muze_backup_[0-9TZ-]+\.db$/;
 
 /**
  * Ensure backup directory exists
@@ -16,11 +22,29 @@ function ensureBackupDir() {
   }
 }
 
+function assertIntegrity(databasePath) {
+  const candidate = new Database(databasePath, { readonly: true, fileMustExist: true });
+  try {
+    const result = candidate.prepare('PRAGMA integrity_check').get();
+    if (result?.integrity_check !== 'ok') {
+      throw new Error(`SQLite integrity check failed for ${databasePath}`);
+    }
+  } finally {
+    candidate.close();
+  }
+}
+
+function validateBackupFilename(filename) {
+  if (!filename || path.basename(filename) !== filename || !BACKUP_FILENAME_PATTERN.test(filename)) {
+    throw new Error('Invalid backup filename');
+  }
+}
+
 /**
  * Create a backup of the database
  * @returns {Object} Result with success status and backup path
  */
-export function createBackup() {
+export async function createBackup() {
   try {
     ensureBackupDir();
 
@@ -28,13 +52,17 @@ export function createBackup() {
     const backupFilename = `muze_backup_${timestamp}.db`;
     const backupPath = path.join(BACKUP_DIR, backupFilename);
 
-    // Check if source database exists
-    if (!fs.existsSync(DB_PATH)) {
+    const databasePath = getDatabasePath();
+    // SQLite's online backup API is safe while the live connection is open.
+    if (databasePath !== ':memory:' && !fs.existsSync(databasePath)) {
       throw new Error('Database file not found');
     }
 
-    // Copy database file
-    fs.copyFileSync(DB_PATH, backupPath);
+    if (checkDatabaseIntegrity() !== 'ok') {
+      throw new Error('SQLite integrity check failed for live database');
+    }
+    await backupDatabase(backupPath);
+    assertIntegrity(backupPath);
 
     // Get file size for info
     const stats = fs.statSync(backupPath);
@@ -89,12 +117,9 @@ export function listBackups() {
  * @param {string} filename - Name of the backup file to restore
  * @returns {Object} Result with success status
  */
-export function restoreBackup(filename) {
+export async function restoreBackup(filename) {
   try {
-    // Validate filename to prevent path traversal
-    if (!filename || filename.includes('..') || filename.includes('/')) {
-      throw new Error('Invalid backup filename');
-    }
+    validateBackupFilename(filename);
 
     const backupPath = path.join(BACKUP_DIR, filename);
 
@@ -103,19 +128,30 @@ export function restoreBackup(filename) {
       throw new Error('Backup file not found');
     }
 
-    // Create a backup of current database before restoring
-    const preRestoreBackup = `muze_pre_restore_${Date.now()}.db`;
-    if (fs.existsSync(DB_PATH)) {
-      fs.copyFileSync(DB_PATH, path.join(BACKUP_DIR, preRestoreBackup));
+    assertIntegrity(backupPath);
+
+    const databasePath = getDatabasePath();
+    if (databasePath === ':memory:') {
+      throw new Error('Restoring an in-memory database is not supported');
     }
 
-    // Restore the backup
-    fs.copyFileSync(backupPath, DB_PATH);
+    // Preserve a verified pre-restore snapshot before changing the live DB.
+    const preRestore = await createBackup();
+
+    const source = new Database(backupPath, { readonly: true, fileMustExist: true });
+    try {
+      await source.backup(databasePath);
+    } finally {
+      source.close();
+    }
+    if (checkDatabaseIntegrity() !== 'ok') {
+      throw new Error('SQLite integrity check failed after restore');
+    }
 
     return {
       success: true,
       restored: filename,
-      preRestoreBackup,
+      preRestoreBackup: preRestore.filename,
       message: 'Database restored successfully. Server restart may be required.',
     };
   } catch (err) {
@@ -132,9 +168,7 @@ export function restoreBackup(filename) {
 export function deleteBackup(filename) {
   try {
     // Validate filename to prevent path traversal
-    if (!filename || filename.includes('..') || filename.includes('/')) {
-      throw new Error('Invalid backup filename');
-    }
+    validateBackupFilename(filename);
 
     const backupPath = path.join(BACKUP_DIR, filename);
 

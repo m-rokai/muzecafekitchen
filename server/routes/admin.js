@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import * as db from '../db/database.js';
-import { generateToken, requireAuth } from '../middleware/auth.js';
+import { generateToken, requireAdmin, requireAuth } from '../middleware/auth.js';
 import { pinRateLimit, adminRateLimit } from '../middleware/rateLimit.js';
 import {
   validateCategory,
@@ -63,6 +63,23 @@ const upload = multer({
 
 const router = express.Router();
 
+function getConfiguredStaffPin() {
+  const storedPin = db.getSetting('admin_pin');
+  if (typeof storedPin === 'string' && /^\d{4,6}$/.test(storedPin)) {
+    return storedPin;
+  }
+
+  // A fresh local/test install may use an explicitly configured temporary
+  // credential. Never accept this bootstrap path in production.
+  if (process.env.NODE_ENV !== 'production') {
+    const initialPin = process.env.INITIAL_ADMIN_PIN;
+    if (typeof initialPin === 'string' && /^\d{4,6}$/.test(initialPin)) {
+      return initialPin;
+    }
+  }
+  return null;
+}
+
 // ============ PIN Authentication ============
 // This is the only unprotected route - returns JWT on success
 // Rate limited to prevent brute force attacks
@@ -75,7 +92,14 @@ router.post('/verify-pin', pinRateLimit, (req, res) => {
     }
 
     const { pin } = validation.data;
-    const storedPin = db.getSetting('admin_pin') || '7890';
+    const storedPin = getConfiguredStaffPin();
+    if (!storedPin) {
+      return res.status(503).json({
+        success: false,
+        message: 'Staff credential is not configured',
+        code: 'STAFF_CREDENTIAL_NOT_CONFIGURED',
+      });
+    }
 
     if (pin === storedPin) {
       // Generate JWT token on successful authentication
@@ -164,6 +188,7 @@ router.get('/public/popular-items', (req, res) => {
 // ============ All routes below require authentication ============
 router.use(requireAuth);
 router.use(adminRateLimit);
+router.use(requireAdmin);
 
 // ============ Image Upload ============
 router.post('/upload', upload.single('image'), (req, res) => {
@@ -674,10 +699,10 @@ router.get('/backups', (req, res) => {
 });
 
 // Create a new backup
-router.post('/backup', (req, res) => {
+router.post('/backup', async (req, res) => {
   try {
-    const result = createBackup();
-    res.status(201).json(result);
+    const result = await createBackup();
+    return res.status(201).json(result);
   } catch (err) {
     console.error('Error creating backup:', err);
     res.status(500).json({ message: 'Failed to create backup' });
@@ -685,11 +710,11 @@ router.post('/backup', (req, res) => {
 });
 
 // Restore from a backup
-router.post('/backup/:filename/restore', (req, res) => {
+router.post('/backup/:filename/restore', async (req, res) => {
   try {
     const { filename } = req.params;
-    const result = restoreBackup(filename);
-    res.json(result);
+    const result = await restoreBackup(filename);
+    return res.json(result);
   } catch (err) {
     console.error('Error restoring backup:', err);
     // Return 404 for not found errors

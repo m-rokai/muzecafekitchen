@@ -17,6 +17,7 @@ export default function CheckoutPage() {
   const [taxRate, setTaxRate] = useState(0.0825);
   const [kitchenStatus, setKitchenStatus] = useState({ open: true, message: '' });
   const orderSubmittedRef = useRef(false);
+  const idempotencyKeyRef = useRef(null);
 
   useEffect(() => {
     settingsAPI.getTaxRate().then(rate => setTaxRate(rate)).catch(() => {});
@@ -47,27 +48,25 @@ export default function CheckoutPage() {
     }
 
     try {
+      if (!idempotencyKeyRef.current) {
+        idempotencyKeyRef.current = typeof globalThis.crypto?.randomUUID === 'function'
+          ? globalThis.crypto.randomUUID()
+          : `order-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      }
       const orderData = {
         customerName: name.trim(),
         email: email.trim() || null,
-        subtotal: cartTotal,
-        tax,
-        total,
         items: items.map(item => ({
           menu_item_id: item.id,
-          item_name: item.name,
           quantity: item.quantity,
-          unit_price: item.price,
-          total_price: getItemTotal(item),
           special_instructions: item.specialInstructions || null,
           modifiers: item.modifiers?.map(mod => ({
-            modifier_name: mod.display_name || mod.name,
-            price_adjustment: mod.price_adjustment || 0,
+            modifier_option_id: mod.id,
           })) || [],
         })),
       };
 
-      const result = await orderAPI.create(orderData);
+      const result = await orderAPI.create(orderData, idempotencyKeyRef.current);
       orderSubmittedRef.current = true;
       setCustomerName(name.trim());
       if (email.trim()) localStorage.setItem('muze_customer_email', email.trim());

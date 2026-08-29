@@ -5,6 +5,7 @@ const API_BASE = import.meta.env.VITE_API_URL ||
 
 // ============ Auth Token Management ============
 const AUTH_TOKEN_KEY = 'muze_auth_token';
+const DEV_CUSTOMER_SUBJECT_KEY = 'muze_dev_customer_subject';
 
 export function getAuthToken() {
   return localStorage.getItem(AUTH_TOKEN_KEY);
@@ -20,6 +21,18 @@ export function clearAuthToken() {
 
 export function isAuthenticated() {
   return !!getAuthToken();
+}
+
+function getCustomerAuthHeaders() {
+  if (import.meta.env.VITE_CUSTOMER_AUTH_MODE !== 'dev-header') return {};
+  let subject = localStorage.getItem(DEV_CUSTOMER_SUBJECT_KEY);
+  if (!subject) {
+    subject = typeof globalThis.crypto?.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `dev-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(DEV_CUSTOMER_SUBJECT_KEY, subject);
+  }
+  return { 'X-Dev-Customer-Subject': subject };
 }
 
 // ============ Request Helpers ============
@@ -114,16 +127,24 @@ export const menuAPI = {
 
 // ============ Order endpoints ============
 export const orderAPI = {
-  // Public - customers can create and view their orders
-  create: (orderData) => request('/orders', {
+  // Customer routes require an upstream-verified subject in production. The
+  // dev header is sent only when explicitly enabled in Vite env.
+  create: (orderData, idempotencyKey) => request('/orders', {
     method: 'POST',
+    headers: {
+      ...getCustomerAuthHeaders(),
+      'Idempotency-Key': idempotencyKey,
+    },
     body: orderData,
   }),
-  get: (id) => request(`/orders/${id}`),
+  get: (id) => request(`/orders/${id}`, {
+    headers: getCustomerAuthHeaders(),
+  }),
 
   // Public - customer cancels their own order (server gates to pending status)
   cancel: (id, reason) => request(`/orders/${id}/cancel`, {
     method: 'PATCH',
+    headers: getCustomerAuthHeaders(),
     body: { reason: reason || null },
   }),
 

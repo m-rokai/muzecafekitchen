@@ -11,6 +11,7 @@ import menuRoutes from './routes/menu.js';
 import orderRoutes from './routes/orders.js';
 import adminRoutes from './routes/admin.js';
 import { startPickupReminderScanner } from './services/pickupReminder.js';
+import { isStaffRole, verifyToken } from './middleware/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,24 +47,40 @@ seedBundledImages();
 const app = express();
 const httpServer = createServer(app);
 // CORS configuration
+function configuredCorsOrigins() {
+  const raw = [process.env.CLIENT_URL, process.env.CORS_ALLOWED_ORIGINS]
+    .filter(Boolean)
+    .flatMap(value => String(value).split(','));
+  const origins = new Set();
+  for (const value of raw) {
+    const origin = value.trim().replace(/\/$/, '');
+    if (!origin) continue;
+    try {
+      const parsed = new URL(origin);
+      if ((parsed.protocol === 'http:' || parsed.protocol === 'https:')
+        && !parsed.username && !parsed.password && !parsed.pathname.replace('/', '')
+        && !parsed.search && !parsed.hash) {
+        origins.add(origin);
+      }
+    } catch {
+      // Invalid configuration never broadens access; it is simply ignored.
+    }
+  }
+  return origins;
+}
+
+const allowedCorsOrigins = configuredCorsOrigins();
 const corsOptions = {
   origin: function(origin, callback) {
-    // Allow requests with no origin (same-origin, mobile apps, curl, etc.)
+    // Requests without an Origin are same-origin/non-browser requests and do
+    // not need a cross-origin response header.
     if (!origin) return callback(null, true);
-    // Allow all localhost ports in development
-    if (origin.match(/^http:\/\/localhost:\d+$/)) {
+    if (allowedCorsOrigins.has(origin)) {
       return callback(null, true);
     }
-    // Allow Fly.io domains
-    if (origin.match(/\.fly\.dev$/)) {
-      return callback(null, true);
-    }
-    // Allow configured client URL
-    if (origin === process.env.CLIENT_URL) {
-      return callback(null, true);
-    }
-    // In production, allow same origin
-    if (process.env.NODE_ENV === 'production') {
+    // Local development may use any local Vite port; production never gets
+    // this wildcard allowance.
+    if (process.env.NODE_ENV !== 'production' && /^http:\/\/localhost:\d+$/.test(origin)) {
       return callback(null, true);
     }
     callback(new Error('Not allowed by CORS'));
@@ -72,6 +89,26 @@ const corsOptions = {
 };
 
 const io = new Server(httpServer, { cors: corsOptions });
+
+// Socket connections are staff-only. Customers poll their ownership-checked
+// order endpoint, so no anonymous global order metadata is broadcast.
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) return next(new Error('Staff socket authentication required'));
+  const auth = verifyToken(token);
+  if (!auth || !isStaffRole(auth.role)) {
+    return next(new Error('Invalid staff socket authentication'));
+  }
+  if (!Number.isFinite(auth.exp) || auth.exp * 1000 <= Date.now()) {
+    return next(new Error('Staff socket token expired'));
+  }
+  socket.data.auth = auth;
+  const expiresIn = auth.exp * 1000 - Date.now();
+  socket.data.expiryTimer = setTimeout(() => socket.disconnect(true), expiresIn);
+  socket.data.expiryTimer.unref?.();
+  socket.once('disconnect', () => clearTimeout(socket.data.expiryTimer));
+  return next();
+});
 
 // Middleware
 app.use(cors(corsOptions));
@@ -128,6 +165,7 @@ if (process.env.NODE_ENV === 'production') {
 // WebSocket connection handling
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
+  if (isStaffRole(socket.data.auth?.role)) socket.join('staff');
 
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);

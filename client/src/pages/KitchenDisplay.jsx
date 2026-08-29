@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { Clock, ChefHat, CheckCircle, Bell, Volume2, VolumeX, RefreshCw, LogOut, Lock, Unlock, X } from 'lucide-react';
-import { orderAPI, adminAPI, isAuthenticated as checkAuth } from '../utils/api';
+import { orderAPI, adminAPI, getAuthToken, isAuthenticated as checkAuth } from '../utils/api';
 import { formatPickupNumber, formatTimeSince } from '../utils/formatters';
 import PinEntry from '../components/PinEntry';
 import CancelReasonModal from '../components/CancelReasonModal';
@@ -98,6 +98,7 @@ export default function KitchenDisplay() {
 
       // Setup WebSocket with built-in reconnection options
       socketRef.current = io(SOCKET_URL, {
+        auth: { token: getAuthToken() },
         reconnection: true,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 10000,
@@ -235,13 +236,13 @@ export default function KitchenDisplay() {
     }
   }
 
-  async function updateStatus(orderId, newStatus) {
-    setUpdatingOrderId(orderId);
+  async function updateStatus(order, newStatus) {
+    setUpdatingOrderId(order.id);
     setUpdateError(null);
     try {
-      console.log(`Updating order ${orderId} to ${newStatus}...`);
-      await orderAPI.updateStatus(orderId, newStatus);
-      console.log(`Order ${orderId} updated successfully`);
+      console.log(`Updating order ${order.public_id} to ${newStatus}...`);
+      await orderAPI.updateStatus(order.public_id, newStatus);
+      console.log(`Order ${order.public_id} updated successfully`);
       // The WebSocket will update the UI
     } catch (err) {
       console.error('Failed to update status:', err);
@@ -257,7 +258,7 @@ export default function KitchenDisplay() {
     if (!cancelTarget) return;
     setUpdatingOrderId(cancelTarget.id);
     try {
-      await orderAPI.updateStatus(cancelTarget.id, 'cancelled', reason);
+      await orderAPI.updateStatus(cancelTarget.public_id, 'cancelled', reason);
       setCancelTarget(null);
     } catch (err) {
       console.error('Failed to cancel order:', err);
@@ -467,7 +468,7 @@ export default function KitchenDisplay() {
                       key={order.id}
                       order={order}
                       currentTime={currentTime}
-                      onStart={() => updateStatus(order.id, 'preparing')}
+                      onStart={() => updateStatus(order, 'preparing')}
                       isUpdating={updatingOrderId === order.id}
                       onCancel={() => setCancelTarget(order)}
                     />
@@ -489,7 +490,7 @@ export default function KitchenDisplay() {
                       key={order.id}
                       order={order}
                       currentTime={currentTime}
-                      onComplete={() => updateStatus(order.id, 'ready')}
+                      onComplete={() => updateStatus(order, 'ready')}
                       isUpdating={updatingOrderId === order.id}
                       onCancel={() => setCancelTarget(order)}
                     />
@@ -511,7 +512,7 @@ export default function KitchenDisplay() {
                       key={order.id}
                       order={order}
                       currentTime={currentTime}
-                      onPickup={() => updateStatus(order.id, 'completed')}
+                      onPickup={() => updateStatus(order, 'completed')}
                       isUpdating={updatingOrderId === order.id}
                       onCancel={() => setCancelTarget(order)}
                     />
@@ -544,7 +545,7 @@ export default function KitchenDisplay() {
   );
 }
 
-function OrderCard({ order, currentTime, onStart, onComplete, onPickup, onCancel, isUpdating }) {
+function OrderCard({ order, onStart, onComplete, onPickup, onCancel, isUpdating }) {
   const statusColors = {
     pending: 'border-yellow-500 bg-yellow-500/10',
     preparing: 'border-blue-500 bg-blue-500/10',
