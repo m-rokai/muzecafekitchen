@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { formatPartnerDeadline, formatPartnerDeliveryDate } from '../lib/partnerSchedule.js';
 
 // Initialize Gmail SMTP transporter using a Workspace mailbox app password.
 // No DNS changes needed — Workspace already signs muzeoffice.com mail with SPF + DKIM.
@@ -49,16 +50,31 @@ function formatPickupNumber(num) {
   return String(num).padStart(3, '0');
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character]);
+}
+
+function preorderReceiptDetails(order) {
+  if (order.channel !== 'partner_meal') return null;
+  const delivery = formatPartnerDeliveryDate(order.preorder_delivery_date);
+  const deadline = formatPartnerDeadline(order.preorder_deadline);
+  return delivery && deadline ? { delivery, deadline } : null;
+}
+
 /**
  * Generate order confirmation email HTML - Muze Office Branded
  */
-function generateConfirmationEmail(order) {
+export function generateConfirmationEmail(order) {
+  const preorder = preorderReceiptDetails(order);
+  const taxIncluded = order.channel === 'partner_meal';
   const itemsHtml = order.items.map(item => `
     <tr>
       <td style="padding: 14px 16px; border-bottom: 1px solid #E8E0D5;">
-        <strong style="color: ${COLORS.dark};">${item.quantity}x ${item.item_name}</strong>
-        ${item.modifiers ? `<br><span style="color: ${COLORS.brown}; font-size: 13px;">${item.modifiers}</span>` : ''}
-        ${item.special_instructions ? `<br><span style="color: ${COLORS.gold}; font-size: 13px; font-style: italic;">Note: ${item.special_instructions}</span>` : ''}
+        <strong style="color: ${COLORS.dark};">${Number(item.quantity)}x ${escapeHtml(item.item_name)}</strong>
+        ${item.modifiers ? `<br><span style="color: ${COLORS.brown}; font-size: 13px;">${escapeHtml(item.modifiers)}</span>` : ''}
+        ${item.special_instructions ? `<br><span style="color: ${COLORS.gold}; font-size: 13px; font-style: italic;">Note: ${escapeHtml(item.special_instructions)}</span>` : ''}
       </td>
       <td style="padding: 14px 16px; border-bottom: 1px solid #E8E0D5; text-align: right; color: ${COLORS.dark}; font-weight: 500;">
         ${formatPrice(item.total_price)}
@@ -82,7 +98,7 @@ function generateConfirmationEmail(order) {
             <span style="font-size: 28px;">☕</span>
           </div>
           <h1 style="margin: 0 0 8px 0; font-size: 28px; font-weight: 700; color: ${COLORS.light}; letter-spacing: -0.5px;">${CAFE_NAME}</h1>
-          <p style="margin: 0; color: ${COLORS.gold}; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Order Confirmed</p>
+          <p style="margin: 0; color: ${COLORS.gold}; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">${preorder ? 'Weekly Meal Pre-Order Confirmed' : 'Order Confirmed'}</p>
         </div>
 
         <!-- Pickup Number Banner -->
@@ -94,10 +110,21 @@ function generateConfirmationEmail(order) {
         <!-- Greeting -->
         <div style="padding: 28px 32px 20px 32px;">
           <p style="margin: 0; color: ${COLORS.dark}; font-size: 16px; line-height: 1.6;">
-            Hi <strong>${order.customer_name}</strong>,<br>
-            Thank you for your order! We're preparing it with care.
+            Hi <strong>${escapeHtml(order.customer_name)}</strong>,<br>
+            ${preorder ? 'Thank you for reserving your meals ahead of time.' : 'Thank you for your order! We\'re preparing it with care.'}
           </p>
         </div>
+
+        ${preorder ? `
+        <!-- Weekly pre-order schedule -->
+        <div style="padding: 0 32px 24px 32px;">
+          <div style="background: #FFF3CD; border: 2px solid ${COLORS.gold}; border-radius: 12px; padding: 20px; color: ${COLORS.dark};">
+            <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px;">Weekly meal pre-order</p>
+            <p style="margin: 0 0 6px 0; font-size: 16px;"><strong>Delivered to Muze for pickup:</strong> ${escapeHtml(preorder.delivery)}</p>
+            <p style="margin: 0; font-size: 14px;"><strong>Ordering deadline:</strong> ${escapeHtml(preorder.deadline)}</p>
+            <p style="margin: 8px 0 0 0; font-size: 14px;"><strong>Flat price:</strong> Listed meal prices include Nevada sales tax.</p>
+          </div>
+        </div>` : ''}
 
         <!-- Order Items -->
         <div style="padding: 0 32px 24px 32px;">
@@ -119,11 +146,11 @@ function generateConfirmationEmail(order) {
           <div style="background: ${COLORS.warmGray}; border-radius: 12px; padding: 20px;">
             <table style="width: 100%; border-collapse: collapse;">
               <tr>
-                <td style="padding: 6px 0; color: #6B5D4D; font-size: 14px;">Subtotal</td>
+                <td style="padding: 6px 0; color: #6B5D4D; font-size: 14px;">${taxIncluded ? 'Subtotal before tax' : 'Subtotal'}</td>
                 <td style="padding: 6px 0; text-align: right; color: ${COLORS.dark};">${formatPrice(order.subtotal)}</td>
               </tr>
               <tr>
-                <td style="padding: 6px 0; color: #6B5D4D; font-size: 14px;">Tax</td>
+                <td style="padding: 6px 0; color: #6B5D4D; font-size: 14px;">${taxIncluded ? 'Nevada tax (included)' : 'Tax'}</td>
                 <td style="padding: 6px 0; text-align: right; color: ${COLORS.dark};">${formatPrice(order.tax)}</td>
               </tr>
               <tr>
@@ -139,7 +166,7 @@ function generateConfirmationEmail(order) {
 
         <!-- Footer -->
         <div style="background: ${COLORS.dark}; padding: 28px 32px; text-align: center;">
-          <p style="margin: 0 0 8px 0; color: ${COLORS.gold}; font-size: 14px; font-weight: 500;">We'll notify you when your order is ready!</p>
+          <p style="margin: 0 0 8px 0; color: ${COLORS.gold}; font-size: 14px; font-weight: 500;">${preorder ? `This is a pre-order for ${escapeHtml(preorder.delivery)}, not an immediate café order.` : 'We\'ll notify you when your order is ready!'}</p>
           <p style="margin: 0; color: #8B7355; font-size: 12px;">Order placed ${new Date(order.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</p>
         </div>
 
@@ -152,6 +179,31 @@ function generateConfirmationEmail(order) {
     </body>
     </html>
   `;
+}
+
+export function generateConfirmationText(order) {
+  const preorder = preorderReceiptDetails(order);
+  const taxIncluded = order.channel === 'partner_meal';
+  const lines = [
+    `${CAFE_NAME} — ${preorder ? 'Weekly meal pre-order confirmed' : 'Order confirmed'}`,
+    `Pickup number: #${formatPickupNumber(order.pickup_number)}`,
+  ];
+  if (preorder) {
+    lines.push(
+      `Delivered to Muze for pickup: ${preorder.delivery}`,
+      `Ordering deadline: ${preorder.deadline}`,
+      `This is a pre-order for ${preorder.delivery}, not an immediate café order.`,
+      'Listed meal prices include Nevada sales tax.',
+    );
+  }
+  lines.push('', ...order.items.map(item => `${Number(item.quantity)}x ${item.item_name} — ${formatPrice(item.total_price)}`));
+  lines.push(
+    '',
+    `${taxIncluded ? 'Subtotal before tax' : 'Subtotal'}: ${formatPrice(order.subtotal)}`,
+    `${taxIncluded ? 'Nevada tax (included)' : 'Tax'}: ${formatPrice(order.tax)}`,
+    `Total: ${formatPrice(order.total)}`,
+  );
+  return lines.join('\n');
 }
 
 /**
@@ -232,11 +284,15 @@ export async function sendOrderConfirmation(order) {
   }
 
   try {
+    const preorder = preorderReceiptDetails(order);
     const info = await transporter.sendMail({
       from: FROM_EMAIL,
       to: order.email,
-      subject: `Order #${formatPickupNumber(order.pickup_number)} Confirmed ☕ ${CAFE_NAME}`,
+      subject: preorder
+        ? `Weekly meal pre-order #${formatPickupNumber(order.pickup_number)} confirmed · ${preorder.delivery}`
+        : `Order #${formatPickupNumber(order.pickup_number)} Confirmed ☕ ${CAFE_NAME}`,
       html: generateConfirmationEmail(order),
+      text: generateConfirmationText(order),
     });
 
     console.log(`Confirmation email sent to ${order.email} for order #${order.pickup_number}`);

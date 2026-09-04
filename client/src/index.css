@@ -14,6 +14,7 @@
   body {
     @apply bg-muze-cream text-muze-dark m-0;
   }
+
 }
 
 @layer components {

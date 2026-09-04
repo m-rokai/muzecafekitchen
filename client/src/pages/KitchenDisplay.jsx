@@ -1,14 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
-import { io } from 'socket.io-client';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, ChefHat, CheckCircle, Bell, Volume2, VolumeX, RefreshCw, LogOut, Lock, Unlock, X } from 'lucide-react';
-import { orderAPI, adminAPI, getAuthToken, isAuthenticated as checkAuth } from '../utils/api';
+import { orderAPI, adminAPI, isAuthenticated as checkAuth } from '../utils/api';
+import { supabase } from '../lib/supabase';
 import { formatPickupNumber, formatTimeSince } from '../utils/formatters';
-import PinEntry from '../components/PinEntry';
+import StaffSignIn from '../components/StaffSignIn';
 import CancelReasonModal from '../components/CancelReasonModal';
-
-// In production, connect to same origin; in dev, use localhost:3001
-const SOCKET_URL = import.meta.env.VITE_WS_URL ||
-  (import.meta.env.PROD ? window.location.origin : 'http://localhost:3001');
 
 export default function KitchenDisplay() {
   const [authState, setAuthState] = useState('checking'); // 'checking' | 'authenticated' | 'unauthenticated'
@@ -17,7 +13,6 @@ export default function KitchenDisplay() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [connected, setConnected] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [updatingOrderId, setUpdatingOrderId] = useState(null);
   const [updateError, setUpdateError] = useState(null);
   const [kitchenOpen, setKitchenOpen] = useState(true);
@@ -26,17 +21,15 @@ export default function KitchenDisplay() {
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeMessageDraft, setCloseMessageDraft] = useState('');
   const [cancelTarget, setCancelTarget] = useState(null); // order to cancel
-  const socketRef = useRef(null);
   const audioRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
+  const soundEnabledRef = useRef(soundEnabled);
 
-  // Verify authentication on mount
   useEffect(() => {
-    verifyAuth();
-  }, []);
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
 
   async function verifyAuth() {
-    if (!checkAuth()) {
+    if (!await checkAuth()) {
       setAuthState('unauthenticated');
       return;
     }
@@ -52,6 +45,11 @@ export default function KitchenDisplay() {
     }
   }
 
+  useEffect(() => {
+    const timer = setTimeout(verifyAuth, 0);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Update clock every second
   useEffect(() => {
     const clockInterval = setInterval(() => {
@@ -61,8 +59,8 @@ export default function KitchenDisplay() {
     return () => clearInterval(clockInterval);
   }, []);
 
-  function handleLogout() {
-    adminAPI.logout();
+  async function handleLogout() {
+    await adminAPI.logout();
     setAuthState('unauthenticated');
   }
 
@@ -70,98 +68,7 @@ export default function KitchenDisplay() {
     setAuthState('authenticated');
   }
 
-  // Setup WebSocket and load orders when authenticated
-  // FIX: Added authState to dependency array so socket connects after authentication
-  useEffect(() => {
-    if (authState !== 'authenticated') return;
-
-    // Initialize Web Audio API for notification sound
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    audioRef.current = audioContext;
-
-    // Load initial orders + kitchen status
-    loadOrders();
-    loadKitchenStatus();
-
-    // Connect to WebSocket with auto-reconnection
-    function connectSocket() {
-      // Clear any pending reconnect
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
-
-      // Disconnect existing socket if any
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
-
-      // Setup WebSocket with built-in reconnection options
-      socketRef.current = io(SOCKET_URL, {
-        auth: { token: getAuthToken() },
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 10000,
-        reconnectionAttempts: 10,
-        timeout: 10000,
-      });
-
-      socketRef.current.on('connect', () => {
-        console.log('Connected to server');
-        setConnected(true);
-        setReconnectAttempt(0);
-        // Reload orders when reconnecting to ensure we're in sync
-        loadOrders();
-      });
-
-      socketRef.current.on('disconnect', (reason) => {
-        console.log('Disconnected from server:', reason);
-        setConnected(false);
-        // Socket.IO handles reconnection automatically with the configured settings
-      });
-
-      socketRef.current.on('connect_error', (error) => {
-        console.error('Connection error:', error.message);
-        setConnected(false);
-      });
-
-      socketRef.current.on('new-order', (order) => {
-        console.log('New order:', order);
-        setOrders(prev => [order, ...prev]);
-        playNotification();
-      });
-
-      socketRef.current.on('order-updated', (updatedOrder) => {
-        console.log('Order updated:', updatedOrder);
-        setOrders(prev =>
-          prev.map(o => o.id === updatedOrder.id ? updatedOrder : o)
-            .filter(o => o.status !== 'completed' && o.status !== 'cancelled')
-        );
-      });
-
-      socketRef.current.on('kitchen-status', (status) => {
-        console.log('Kitchen status changed:', status);
-        setKitchenOpen(!!status.open);
-        setKitchenClosedMessage(status.message || '');
-      });
-    }
-
-    // Initial connection
-    connectSocket();
-
-    // Refresh orders periodically as fallback
-    const interval = setInterval(loadOrders, 30000);
-
-    return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      socketRef.current?.disconnect();
-      clearInterval(interval);
-    };
-  }, [authState]);
-
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     try {
       const data = await orderAPI.getActive();
       setOrders(data);
@@ -170,9 +77,9 @@ export default function KitchenDisplay() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  async function loadKitchenStatus() {
+  const loadKitchenStatus = useCallback(async () => {
     try {
       const status = await orderAPI.getKitchenStatus();
       setKitchenOpen(!!status.open);
@@ -180,7 +87,80 @@ export default function KitchenDisplay() {
     } catch (err) {
       console.error('Failed to load kitchen status:', err);
     }
-  }
+  }, []);
+
+  const playNotification = useCallback(() => {
+    if (!soundEnabledRef.current || !audioRef.current) return;
+    try {
+      const audioContext = audioRef.current;
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.frequency.value = 800;
+      oscillator.type = 'sine';
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.5);
+
+      setTimeout(() => {
+        if (audioContext.state === 'closed') return;
+        const secondOscillator = audioContext.createOscillator();
+        const secondGain = audioContext.createGain();
+        secondOscillator.connect(secondGain);
+        secondGain.connect(audioContext.destination);
+        secondOscillator.frequency.value = 1000;
+        secondOscillator.type = 'sine';
+        secondGain.gain.setValueAtTime(0.3, audioContext.currentTime);
+        secondGain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+        secondOscillator.start(audioContext.currentTime);
+        secondOscillator.stop(audioContext.currentTime + 0.3);
+      }, 200);
+    } catch (err) {
+      console.error('Audio error:', err);
+    }
+  }, []);
+
+  // Subscribe to the private kitchen broadcast channel when authenticated.
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+
+    // Initialize Web Audio API for notification sound
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    audioRef.current = audioContext;
+
+    // Load initial orders + kitchen status
+    const initialLoad = setTimeout(() => {
+      loadOrders();
+      loadKitchenStatus();
+    }, 0);
+
+    const refreshFromBroadcast = () => {
+      loadOrders();
+      loadKitchenStatus();
+    };
+    const channel = supabase
+      .channel('kitchen', { config: { private: true } })
+      .on('broadcast', { event: 'INSERT' }, () => {
+        playNotification();
+        refreshFromBroadcast();
+      })
+      .on('broadcast', { event: 'UPDATE' }, refreshFromBroadcast)
+      .on('broadcast', { event: 'DELETE' }, refreshFromBroadcast)
+      .subscribe(status => setConnected(status === 'SUBSCRIBED'));
+
+    // Refresh orders periodically as fallback
+    const interval = setInterval(loadOrders, 30000);
+
+    return () => {
+      setConnected(false);
+      clearTimeout(initialLoad);
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+      audioContext.close();
+    };
+  }, [authState, loadKitchenStatus, loadOrders, playNotification]);
 
   async function toggleKitchen(open, message = '') {
     setKitchenToggling(true);
@@ -198,44 +178,6 @@ export default function KitchenDisplay() {
     }
   }
 
-  function playNotification() {
-    if (soundEnabled && audioRef.current) {
-      try {
-        const audioContext = audioRef.current;
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-
-        oscillator.frequency.value = 800;
-        oscillator.type = 'sine';
-
-        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-
-        oscillator.start(audioContext.currentTime);
-        oscillator.stop(audioContext.currentTime + 0.5);
-
-        // Play a second beep
-        setTimeout(() => {
-          const osc2 = audioContext.createOscillator();
-          const gain2 = audioContext.createGain();
-          osc2.connect(gain2);
-          gain2.connect(audioContext.destination);
-          osc2.frequency.value = 1000;
-          osc2.type = 'sine';
-          gain2.gain.setValueAtTime(0.3, audioContext.currentTime);
-          gain2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
-          osc2.start(audioContext.currentTime);
-          osc2.stop(audioContext.currentTime + 0.3);
-        }, 200);
-      } catch (err) {
-        console.error('Audio error:', err);
-      }
-    }
-  }
-
   async function updateStatus(order, newStatus) {
     setUpdatingOrderId(order.id);
     setUpdateError(null);
@@ -243,7 +185,7 @@ export default function KitchenDisplay() {
       console.log(`Updating order ${order.public_id} to ${newStatus}...`);
       await orderAPI.updateStatus(order.public_id, newStatus);
       console.log(`Order ${order.public_id} updated successfully`);
-      // The WebSocket will update the UI
+      await loadOrders();
     } catch (err) {
       console.error('Failed to update status:', err);
       setUpdateError(`Failed to update order: ${err.message}`);
@@ -285,7 +227,7 @@ export default function KitchenDisplay() {
   }
 
   if (authState === 'unauthenticated') {
-    return <PinEntry onSuccess={handleAuthSuccess} title="Kitchen Access" />;
+    return <StaffSignIn onSuccess={handleAuthSuccess} title="Kitchen Access" />;
   }
 
   return (
@@ -306,7 +248,7 @@ export default function KitchenDisplay() {
             connected ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
           }`}>
             <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400 animate-pulse'}`} />
-            {connected ? 'Live' : reconnectAttempt > 0 ? `Reconnecting (${reconnectAttempt})` : 'Disconnected'}
+            {connected ? 'Live' : 'Disconnected'}
           </div>
 
           {/* Kitchen Open/Closed Toggle */}

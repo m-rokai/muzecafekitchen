@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CheckCircle, Clock, Coffee, ArrowLeft, Loader2, Laptop, XCircle } from 'lucide-react';
 import { orderAPI } from '../utils/api';
@@ -6,6 +6,8 @@ import { formatPriceFromDollars, formatPickupNumber, formatTime } from '../utils
 import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
 import CancelReasonModal from '../components/CancelReasonModal';
+import PortalHomeLink from '../components/PortalHomeLink';
+import { getPartnerSchedule } from '../utils/partnerSchedule';
 
 export default function ConfirmationPage() {
   const { orderId } = useParams();
@@ -20,22 +22,19 @@ export default function ConfirmationPage() {
     const result = await orderAPI.cancel(orderId, reason);
     setOrder(result.order);
     setShowCancelModal(false);
-    localStorage.removeItem('muze_last_order');
+    localStorage.removeItem(`muze_last_order_${result.order.channel || 'cafe'}`);
   }
 
-  useEffect(() => {
-    loadOrder();
-    const poll = setInterval(loadOrder, 10000);
-    return () => clearInterval(poll);
-  }, [orderId]);
-
-  async function loadOrder() {
+  const loadOrder = useCallback(async () => {
     try {
       const data = await orderAPI.get(orderId);
       setOrder(data);
+      if (['paid', 'authorized'].includes(data.payment_status)) {
+        localStorage.removeItem(`muze_cart_${data.channel || 'cafe'}`);
+      }
       setError(null);
       if (data.status === 'completed' || data.status === 'cancelled') {
-        localStorage.removeItem('muze_last_order');
+        localStorage.removeItem(`muze_last_order_${data.channel || 'cafe'}`);
       }
     } catch (err) {
       console.error('Failed to load order:', err);
@@ -43,7 +42,16 @@ export default function ConfirmationPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [orderId]);
+
+  useEffect(() => {
+    const initialLoad = setTimeout(loadOrder, 0);
+    const poll = setInterval(loadOrder, 10000);
+    return () => {
+      clearTimeout(initialLoad);
+      clearInterval(poll);
+    };
+  }, [loadOrder]);
 
   if (loading) {
     return (
@@ -64,22 +72,44 @@ export default function ConfirmationPage() {
             onClick={() => navigate('/')}
             className="px-6 py-3 rounded-full bg-muze-dark text-muze-gold font-semibold hover:bg-muze-brown hover:text-white transition-colors"
           >
-            Return to Menu
+            Back to all menus
           </button>
         </div>
       </div>
     );
   }
 
-  const statusConfig = {
+  const isPartnerPreorder = order.channel === 'partner_meal';
+  const preorderSchedule = isPartnerPreorder
+    ? getPartnerSchedule(order.preorder_delivery_date)
+    : null;
+  const statusConfig = isPartnerPreorder ? {
+    pending:    { icon: Clock,       color: 'text-muze-brown', bg: 'bg-muze-gold/30',  label: 'Pre-Order Reserved', description: 'Your weekly meal pre-order is reserved for Monday delivery to Muze.' },
+    preparing:  { icon: Coffee,      color: 'text-muze-brown', bg: 'bg-muze-brown/20', label: 'Partner Preparing', description: 'Down to Earth Cuisine is preparing the weekly meal order.' },
+    ready:      { icon: CheckCircle, color: 'text-green-700',  bg: 'bg-green-100',     label: 'Ready for Pickup', description: 'Your pre-ordered meal is ready at Muze.' },
+    completed:  { icon: CheckCircle, color: 'text-muze-dark/70', bg: 'bg-gray-100',    label: 'Completed',       description: 'Thank you for your weekly meal pre-order!' },
+    cancelled:  { icon: XCircle,     color: 'text-red-600',    bg: 'bg-red-100',       label: 'Cancelled',       description: 'This pre-order was cancelled.' },
+  } : {
     pending:    { icon: Clock,       color: 'text-muze-brown', bg: 'bg-muze-gold/30',  label: 'Order Received', description: 'We\'re getting started on your order!' },
     preparing:  { icon: Coffee,      color: 'text-muze-brown', bg: 'bg-muze-brown/20', label: 'Preparing',       description: 'Your order is being prepared.' },
     ready:      { icon: CheckCircle, color: 'text-green-700',  bg: 'bg-green-100',     label: 'Ready for Pickup',description: 'Your order is ready! Come pick it up.' },
     completed:  { icon: CheckCircle, color: 'text-muze-dark/70', bg: 'bg-gray-100',    label: 'Completed',       description: 'Thank you for your order!' },
     cancelled:  { icon: XCircle,     color: 'text-red-600',    bg: 'bg-red-100',       label: 'Cancelled',       description: 'This order was cancelled. You weren\'t charged.' },
   };
-  const status = statusConfig[order.status] || statusConfig.pending;
+  const paymentConfirmed = ['paid', 'authorized'].includes(order.payment_status);
+  const status = paymentConfirmed
+    ? (statusConfig[order.status] || statusConfig.pending)
+    : {
+        icon: Clock,
+        color: 'text-muze-brown',
+        bg: 'bg-muze-gold/30',
+        label: order.payment_status === 'failed' ? 'Payment Failed' : 'Confirming Payment',
+        description: order.payment_status === 'failed'
+          ? 'Your order has not been sent for preparation.'
+          : 'We are waiting for secure payment confirmation.',
+      };
   const StatusIcon = status.icon;
+  const storefrontPath = order.channel === 'partner_meal' ? '/partner-meals' : '/cafe';
 
   return (
     <div className="min-h-screen pb-12 relative">
@@ -87,13 +117,16 @@ export default function ConfirmationPage() {
 
       {/* Header */}
       <header className="px-4 py-4">
-        <button
-          onClick={() => navigate('/')}
-          className="flex items-center gap-2 text-muze-dark/70 hover:text-muze-dark transition-colors text-sm font-semibold"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Start a new order
-        </button>
+        <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
+          <button
+            onClick={() => navigate(storefrontPath)}
+            className="flex items-center gap-2 text-muze-dark/70 hover:text-muze-dark transition-colors text-sm font-semibold"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Start a new order
+          </button>
+          <PortalHomeLink label="Home" />
+        </div>
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-4">
@@ -103,7 +136,7 @@ export default function ConfirmationPage() {
             <StatusIcon className={`w-10 h-10 ${status.color}`} strokeWidth={1.8} />
           </div>
           <h1 className="text-3xl sm:text-4xl font-bold text-muze-dark mb-1">
-            Order Confirmed!
+            {paymentConfirmed ? (isPartnerPreorder ? 'Weekly Meal Pre-Order Confirmed!' : 'Order Confirmed!') : status.label}
           </h1>
           <p className="text-muze-dark/70 mb-6">Thank you, {order.customer_name}.</p>
 
@@ -123,6 +156,15 @@ export default function ConfirmationPage() {
             Status refreshes automatically
           </div>
         </GlassPanel>
+
+        {preorderSchedule ? (
+          <div className="mt-6 rounded-2xl border-2 border-muze-gold bg-amber-50 p-5">
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-muze-brown">Weekly meal pre-order schedule</p>
+            <p className="mt-2 font-bold text-muze-dark">Delivered to Muze for pickup: {preorderSchedule.deliveryLabel}</p>
+            <p className="mt-1 text-sm text-muze-dark/75">Order deadline: {preorderSchedule.deadlineLabel}</p>
+            <p className="mt-2 text-sm text-muze-dark/65">This is a meal prepared ahead for Monday, not an immediate café order. Your email receipt includes this schedule.</p>
+          </div>
+        ) : null}
 
         {/* Order details — solid card */}
         <div className="rounded-2xl bg-white/85 backdrop-blur-sm border border-white/70 shadow-sm p-6 mt-6">
@@ -156,15 +198,17 @@ export default function ConfirmationPage() {
 
           <div className="mt-4 pt-4 border-t border-muze-gold/20 space-y-2">
             <div className="flex justify-between text-muze-dark/70">
-              <span>Subtotal</span>
+              <span>{isPartnerPreorder ? 'Subtotal before tax' : 'Subtotal'}</span>
               <span>{formatPriceFromDollars(order.subtotal)}</span>
             </div>
             <div className="flex justify-between text-muze-dark/70">
-              <span>Tax</span>
+              <span>{isPartnerPreorder ? 'Nevada tax (included)' : 'Tax'}</span>
               <span>{formatPriceFromDollars(order.tax)}</span>
             </div>
             <div className="flex justify-between text-lg font-bold pt-2 border-t border-muze-gold/20">
-              <span className="text-muze-dark">Total · Pay at pickup</span>
+              <span className="text-muze-dark">
+                Total · {paymentConfirmed ? `Paid with ${order.payment_provider === 'stripe' ? 'Stripe' : 'Square'}` : 'Payment pending'}
+              </span>
               <span className="text-muze-brown">{formatPriceFromDollars(order.total)}</span>
             </div>
           </div>
@@ -174,18 +218,18 @@ export default function ConfirmationPage() {
         <div className="grid grid-cols-2 gap-3 mt-4">
           <div className="rounded-2xl bg-white/85 border border-white/70 p-4 text-center">
             <Clock className="w-6 h-6 text-muze-brown mx-auto mb-2" strokeWidth={1.8} />
-            <p className="text-xs text-muze-dark/60 uppercase tracking-wider">Estimated Wait</p>
-            <p className="font-bold text-muze-dark mt-1">10–15 mins</p>
+            <p className="text-xs text-muze-dark/60 uppercase tracking-wider">{preorderSchedule ? 'Delivery Day' : 'Estimated Wait'}</p>
+            <p className="font-bold text-muze-dark mt-1">{preorderSchedule ? preorderSchedule.deliveryLabel : '10–15 mins'}</p>
           </div>
           <div className="rounded-2xl bg-white/85 border border-white/70 p-4 text-center">
             <Coffee className="w-6 h-6 text-muze-brown mx-auto mb-2" strokeWidth={1.8} />
             <p className="text-xs text-muze-dark/60 uppercase tracking-wider">Pickup At</p>
-            <p className="font-bold text-muze-dark mt-1">Muze Café</p>
+            <p className="font-bold text-muze-dark mt-1">{preorderSchedule ? 'Muze Office' : 'Muze Café'}</p>
           </div>
         </div>
 
         {/* Cancel order — card-sized button, only while still pending */}
-        {order.status === 'pending' && (
+        {order.status === 'pending' && order.payment_method === 'cash' && (
           <button
             onClick={() => setShowCancelModal(true)}
             className="w-full mt-4 rounded-2xl border-2 border-red-300 hover:border-red-500 hover:bg-red-50 transition-colors p-4 flex items-center gap-3 text-left"
@@ -222,7 +266,7 @@ export default function ConfirmationPage() {
 
         {/* New order */}
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate(storefrontPath)}
           className="w-full mt-8 py-4 rounded-2xl border-2 border-muze-brown/30 text-muze-brown font-bold hover:bg-muze-brown hover:text-white hover:border-muze-brown transition-colors"
         >
           Start New Order

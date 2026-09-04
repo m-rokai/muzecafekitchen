@@ -103,6 +103,10 @@ export function sanitizeOrderData(orderData) {
   return {
     customerName: orderData.customerName ? sanitizeName(orderData.customerName) : null,
     email: orderData.email ? sanitizeEmail(orderData.email) : null,
+    channel: ['cafe', 'partner_meal'].includes(orderData.channel) ? orderData.channel : null,
+    paymentSourceToken: typeof orderData.paymentSourceToken === 'string'
+      ? orderData.paymentSourceToken.trim().substring(0, 2048)
+      : null,
     notes: sanitizeText(orderData.notes),
     items: (orderData.items || []).map(item => ({
       menu_item_id: item.menu_item_id ? sanitizeInteger(item.menu_item_id, 1) : null,

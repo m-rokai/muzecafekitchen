@@ -1,11 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import database, {
-  createOrderWithItems,
-  getActiveOrders,
-  getOrCreateCustomer,
-  isPaymentFulfillmentEligible,
-} from '../db/database.js';
+import { isPaymentFulfillmentEligible } from '../db/database.js';
 import { OrderPricingError, validateAndPriceOrder } from './orderPricing.js';
 
 function makeDb({ item = {}, groups = [], options = [] } = {}) {
@@ -29,7 +24,7 @@ function makeDb({ item = {}, groups = [], options = [] } = {}) {
     getMenuItem: id => (id === menuItem.id ? menuItem : null),
     getModifiersForItem: id => (id === menuItem.id ? modifierGroups : []),
     getModifierOption: id => modifierOptions.find(option => option.id === id) || null,
-    getSetting: key => (key === 'tax_rate' ? '0.0825' : null),
+    getSetting: key => ({ tax_rate: '0.0825', partner_tax_rate: '0.08375' })[key] ?? null,
   };
 }
 
@@ -48,8 +43,8 @@ function makeOrder(overrides = {}) {
   };
 }
 
-test('prices menu and modifiers from database cents, ignoring client money fields', () => {
-  const pricing = validateAndPriceOrder(makeOrder({
+test('prices menu and modifiers from database cents, ignoring client money fields', async () => {
+  const pricing = await validateAndPriceOrder(makeOrder({
     subtotal: 0,
     total: 0,
     items: [{
@@ -69,23 +64,23 @@ test('prices menu and modifiers from database cents, ignoring client money field
   assert.equal(pricing.normalized.items[0].unit_price, undefined);
 });
 
-test('rejects unavailable menu items and modifiers not linked to the item', () => {
-  assert.throws(
-    () => validateAndPriceOrder(makeOrder(), makeDb({ item: { available: 0 } })),
+test('rejects unavailable menu items and modifiers not linked to the item', async () => {
+  await assert.rejects(
+    validateAndPriceOrder(makeOrder(), makeDb({ item: { available: 0 } })),
     error => error instanceof OrderPricingError && error.code === 'MENU_ITEM_UNAVAILABLE',
   );
 
-  assert.throws(
-    () => validateAndPriceOrder(makeOrder(), makeDb({
+  await assert.rejects(
+    validateAndPriceOrder(makeOrder(), makeDb({
       groups: [{ id: 8, name: 'Other', display_name: 'Other', min_selections: 0, max_selections: 2, required: 0 }],
     })),
     error => error instanceof OrderPricingError && error.code === 'MODIFIER_NOT_ALLOWED',
   );
 });
 
-test('enforces required modifier cardinality', () => {
-  assert.throws(
-    () => validateAndPriceOrder(
+test('enforces required modifier cardinality', async () => {
+  await assert.rejects(
+    validateAndPriceOrder(
       makeOrder({ items: [{ ...makeOrder().items[0], modifiers: [] }] }),
       makeDb({ groups: [{ id: 7, name: 'Milk', display_name: 'Milk', min_selections: 1, max_selections: 1, required: 1 }] }),
     ),
@@ -100,48 +95,54 @@ test('keeps provider-unpaid states out of fulfillment while allowing explicit le
   assert.equal(isPaymentFulfillmentEligible({ payment_status: 'authorized', payment_method: 'square' }), true);
 });
 
-test('active orders exclude provider-unpaid orders but retain legacy cash orders', () => {
-  const customer = getOrCreateCustomer('active-orders-payment-test');
-  const common = {
-    customerId: customer.id,
-    customerName: 'Payment Test',
-    subtotalCents: 100,
-    taxCents: 8,
-    totalCents: 108,
-    items: [],
-    actorSubject: 'active-orders-payment-test',
-  };
-  const legacyCash = createOrderWithItems({
-    ...common,
-    idempotencyKey: 'active-orders-cash-001',
-    requestHash: 'active-orders-cash-hash',
+test('backs the Clark County tax out of the flat partner-meal price', async () => {
+  const pricing = await validateAndPriceOrder(makeOrder({
+    channel: 'partner_meal',
+    items: [{
+      menu_item_id: 1,
+      quantity: 1,
+      special_instructions: null,
+      modifiers: [],
+    }],
+  }), makeDb({
+    item: {
+      name: 'Za’atar Chicken',
+      channel: 'partner_meal',
+      partner_id: 'partner-1',
+      price_cents: 2059,
+      menu_week: '2026-09-14',
+    },
+    groups: [],
+    options: [],
+  }), { now: new Date('2026-09-02T20:00:00Z') });
+
+  assert.equal(pricing.subtotalCents, 1900);
+  assert.equal(pricing.taxCents, 159);
+  assert.equal(pricing.totalCents, 2059);
+  assert.equal(pricing.taxIncluded, true);
+  assert.equal(pricing.partnerId, 'partner-1');
+  assert.equal(pricing.partnerDeliveryDate, '2026-09-14');
+  assert.equal(pricing.partnerOrderDeadline, '2026-09-09T19:00:00.000Z');
+});
+
+test('rejects partner pre-orders at and after Wednesday noon Pacific', async () => {
+  const order = makeOrder({
+    channel: 'partner_meal',
+    items: [{ menu_item_id: 1, quantity: 1, special_instructions: null, modifiers: [] }],
   });
-  const providerUnpaid = createOrderWithItems({
-    ...common,
-    idempotencyKey: 'active-orders-provider-001',
-    requestHash: 'active-orders-provider-hash',
-    paymentStatus: 'pending',
-    paymentMethod: 'square',
-  });
-  const paidProvider = createOrderWithItems({
-    ...common,
-    idempotencyKey: 'active-orders-paid-001',
-    requestHash: 'active-orders-paid-hash',
-    paymentStatus: 'paid',
-    paymentMethod: 'square',
+  const database = makeDb({
+    item: {
+      name: 'Za’atar Chicken', channel: 'partner_meal', partner_id: 'partner-1',
+      price_cents: 2059, menu_week: '2026-09-14',
+    },
+    groups: [],
+    options: [],
   });
 
-  try {
-    const activeIds = new Set(getActiveOrders().map(order => order.id));
-    assert.equal(activeIds.has(legacyCash.id), true);
-    assert.equal(activeIds.has(providerUnpaid.id), false);
-    assert.equal(activeIds.has(paidProvider.id), true);
-  } finally {
-    database.prepare('DELETE FROM orders WHERE id IN (?, ?, ?)').run(
-      legacyCash.id,
-      providerUnpaid.id,
-      paidProvider.id,
-    );
-    database.prepare('DELETE FROM customers WHERE id = ?').run(customer.id);
-  }
+  await assert.rejects(
+    validateAndPriceOrder(order, database, { now: new Date('2026-09-09T19:00:00.000Z') }),
+    error => error instanceof OrderPricingError
+      && error.code === 'PARTNER_PREORDER_CLOSED'
+      && error.status === 409,
+  );
 });

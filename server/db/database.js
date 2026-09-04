@@ -1,26 +1,4 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import crypto from 'crypto';
-import { categories, menuItems, modifierGroups, modifierOptions } from './seed.js';
-import { runMigrations } from './migrations.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Use DATABASE_PATH env var for production (Fly.io persistent volume)
-const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'muze_orders.db');
-
-function getMenuImageUrl(itemName) {
-  const slug = itemName
-    .toLowerCase()
-    .replace(/["']/g, '')
-    .replace(/&/g, ' ')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-
-  return `/uploads/menu-${slug}.webp`;
-}
+import { getSql } from './postgres.js';
 
 export function dollarsToCents(value) {
   const amount = Number(value);
@@ -29,790 +7,434 @@ export function dollarsToCents(value) {
 }
 
 export function centsToDollars(cents) {
-  const amount = Number.isInteger(cents) ? cents : 0;
+  const amount = Number.isInteger(cents) ? cents : Number(cents) || 0;
   return amount / 100;
 }
 
 export const FULFILLMENT_PAYMENT_STATUSES = Object.freeze(['authorized', 'paid']);
 export const LEGACY_CASH_PAYMENT_METHOD = 'cash';
-
-/**
- * Cash checkout is explicit for the legacy flow. Provider states that are
- * unpaid/awaiting are not eligible for fulfillment until a future adapter
- * records authorization or payment.
- */
-export function isPaymentFulfillmentEligible(order) {
-  const paymentStatus = String(order?.payment_status || '').toLowerCase();
-  if (FULFILLMENT_PAYMENT_STATUSES.includes(paymentStatus)) return true;
-  return paymentStatus === 'unpaid'
-    && order?.payment_method === LEGACY_CASH_PAYMENT_METHOD;
-}
-
 export const LEGAL_STATUS_TRANSITIONS = Object.freeze({
   pending: 'preparing',
   preparing: 'ready',
   ready: 'completed',
 });
 
-// Initialize database
-const db = new Database(dbPath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-// Schema/data changes are applied only through the versioned runner. This is
-// safe for both a new checkout and the existing Fly persistent volume.
-const appliedMigrations = runMigrations(db);
-console.log('Database migrations applied:', appliedMigrations.map(m => `${m.version}:${m.name}`).join(', '));
-
-export function getDatabasePath() {
-  return dbPath;
+export function isPaymentFulfillmentEligible(order) {
+  const status = String(order?.payment_status || '').toLowerCase();
+  return FULFILLMENT_PAYMENT_STATUSES.includes(status)
+    || (status === 'unpaid' && order?.payment_method === LEGACY_CASH_PAYMENT_METHOD);
 }
 
-export function checkDatabaseIntegrity() {
-  const result = db.prepare('PRAGMA integrity_check').get();
-  return result?.integrity_check || null;
+function idNumber(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) ? number : value;
 }
 
-export function backupDatabase(destinationPath) {
-  return db.backup(destinationPath);
-}
-
-
-
-// Seed database with initial menu data if empty
-export function seedDatabase() {
-  const itemCount = db.prepare('SELECT COUNT(*) as count FROM menu_items').get().count;
-
-  if (itemCount === 0) {
-    console.log('Seeding database with Muze Café menu...');
-
-    // Insert categories
-    const insertCategory = db.prepare('INSERT OR IGNORE INTO categories (name, description, sort_order) VALUES (?, ?, ?)');
-    for (const cat of categories) {
-      insertCategory.run(cat.name, cat.description || '', cat.sort_order);
-    }
-
-    // Get category IDs
-    const categoryMap = new Map();
-    for (const cat of getAllCategories()) {
-      categoryMap.set(cat.name, cat.id);
-    }
-
-    // Insert menu items
-    const insertItem = db.prepare(`
-      INSERT INTO menu_items
-        (name, description, price, price_cents, category_id, image_url, available, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-    `);
-
-    let sortOrder = 0;
-    for (const item of menuItems) {
-      // Find category by id from seed data
-      const category = categories.find(c => c.id === item.category_id);
-      const categoryId = category ? categoryMap.get(category.name) : null;
-      const priceCents = dollarsToCents(item.price);
-      insertItem.run(
-        item.name,
-        item.description || '',
-        centsToDollars(priceCents),
-        priceCents,
-        categoryId,
-        getMenuImageUrl(item.name),
-        sortOrder++,
-      );
-    }
-
-    // Insert modifier groups
-    const insertGroup = db.prepare(`
-      INSERT INTO modifier_groups (name, display_name, min_selections, max_selections, required, sort_order)
-      VALUES (?, ?, 0, 10, 0, ?)
-    `);
-
-    const groupMap = new Map();
-    for (const group of modifierGroups) {
-      const result = insertGroup.run(group.name, group.display_name, group.sort_order);
-      groupMap.set(group.id, result.lastInsertRowid);
-    }
-
-    // Insert modifier options
-    const insertOption = db.prepare(`
-      INSERT INTO modifier_options
-        (group_id, name, display_name, price_adjustment, price_adjustment_cents, available, sort_order)
-      VALUES (?, ?, ?, ?, ?, 1, ?)
-    `);
-
-    let optionOrder = 0;
-    for (const option of modifierOptions) {
-      const groupId = groupMap.get(option.group_id);
-      if (groupId) {
-        const adjustmentCents = dollarsToCents(option.price);
-        insertOption.run(
-          groupId,
-          option.name,
-          option.name,
-          centsToDollars(adjustmentCents),
-          adjustmentCents,
-          optionOrder++,
-        );
-      }
-    }
-
-    // Link items to modifier groups based on category
-    const allItems = getAllMenuItemsIncludingUnavailable();
-    for (const item of allItems) {
-      for (const group of modifierGroups) {
-        const dbGroupId = groupMap.get(group.id);
-        if (!dbGroupId) continue;
-
-        // Link by category
-        if (group.category_ids) {
-          const itemCategory = categories.find(c => c.name === item.category_name);
-          if (itemCategory && group.category_ids.includes(itemCategory.id)) {
-            linkItemToModifierGroup(item.id, dbGroupId);
-          }
-        }
-
-        // Link by specific item name
-        if (group.item_names && group.item_names.includes(item.name)) {
-          linkItemToModifierGroup(item.id, dbGroupId);
-        }
-      }
-    }
-
-    console.log('Database seeded successfully!');
+function normalizeRow(row) {
+  if (!row) return null;
+  const result = { ...row };
+  for (const key of ['id', 'category_id', 'group_id', 'item_id', 'order_id', 'order_item_id', 'menu_item_id', 'modifier_option_id']) {
+    if (result[key] != null) result[key] = idNumber(result[key]);
   }
+  for (const key of ['price', 'price_adjustment', 'subtotal', 'tax', 'total', 'unit_price', 'total_price', 'total_revenue']) {
+    if (result[key] != null) result[key] = Number(result[key]);
+  }
+  return result;
 }
 
-// Helper to get next pickup number (resets daily)
-export function getNextPickupNumber() {
-  const today = new Date().toISOString().split('T')[0];
-  const counter = db.prepare('SELECT * FROM pickup_counter WHERE id = 1').get();
+function normalizeRows(rows) {
+  return rows.map(normalizeRow);
+}
 
-  if (counter.last_reset_date !== today) {
-    db.prepare('UPDATE pickup_counter SET current_number = 1, last_reset_date = ? WHERE id = 1').run(today);
-    return 1;
-  } else {
-    const newNumber = counter.current_number + 1;
-    db.prepare('UPDATE pickup_counter SET current_number = ? WHERE id = 1').run(newNumber);
-    return newNumber;
+function allowedUpdates(updates, fields) {
+  const result = {};
+  for (const field of fields) {
+    if (updates[field] !== undefined) result[field] = updates[field];
   }
+  return result;
+}
+
+export async function checkDatabaseIntegrity() {
+  const sql = getSql();
+  const [result] = await sql`select true as healthy`;
+  return result?.healthy ? 'ok' : null;
 }
 
 // ============ Category CRUD ============
-export function getAllCategories() {
-  return db.prepare('SELECT * FROM categories ORDER BY sort_order').all();
+export async function getAllCategories(channel = null) {
+  const sql = getSql();
+  const rows = channel
+    ? await sql`select * from public.categories where channel = ${channel} order by sort_order, name`
+    : await sql`select * from public.categories order by channel, sort_order, name`;
+  return normalizeRows(rows);
 }
 
-export function getCategory(id) {
-  return db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
+export async function getCategory(id) {
+  const [row] = await getSql()`select * from public.categories where id = ${id}`;
+  return normalizeRow(row);
 }
 
-export function getCategoryByName(name) {
-  return db.prepare('SELECT * FROM categories WHERE name = ?').get(name);
+export async function getCategoryByName(name) {
+  const [row] = await getSql()`select * from public.categories where name = ${name}`;
+  return normalizeRow(row);
 }
 
-export function createCategory(category) {
-  const stmt = db.prepare('INSERT INTO categories (name, description, sort_order) VALUES (?, ?, ?)');
-  const result = stmt.run(category.name, category.description || '', category.sort_order || 0);
-  return result.lastInsertRowid;
+export async function createCategory(category) {
+  const [row] = await getSql()`
+    insert into public.categories (name, description, sort_order)
+    values (${category.name}, ${category.description || ''}, ${category.sort_order || 0})
+    returning id
+  `;
+  return idNumber(row.id);
 }
 
-export function updateCategory(id, updates) {
-  const fields = Object.keys(updates).map(k => `${k} = @${k}`).join(', ');
-  const stmt = db.prepare(`UPDATE categories SET ${fields} WHERE id = @id`);
-  return stmt.run({ ...updates, id });
+export async function updateCategory(id, updates) {
+  const sql = getSql();
+  const values = allowedUpdates(updates, ['name', 'description', 'sort_order']);
+  if (Object.keys(values).length === 0) return null;
+  return sql`update public.categories set ${sql(values)} where id = ${id}`;
 }
 
-export function deleteCategory(id) {
-  // Move items to uncategorized (null) before deleting
-  db.prepare('UPDATE menu_items SET category_id = NULL WHERE category_id = ?').run(id);
-  return db.prepare('DELETE FROM categories WHERE id = ?').run(id);
+export async function deleteCategory(id) {
+  return getSql()`delete from public.categories where id = ${id}`;
 }
 
 // ============ Menu Item CRUD ============
-export function getAllMenuItems() {
-  return db.prepare(`
-    SELECT mi.*, c.name as category_name
-    FROM menu_items mi
-    LEFT JOIN categories c ON mi.category_id = c.id
-    WHERE mi.available = 1
-    ORDER BY c.sort_order, mi.sort_order, mi.name
-  `).all();
-}
-
-export function getAllMenuItemsIncludingUnavailable() {
-  return db.prepare(`
-    SELECT mi.*, c.name as category_name
-    FROM menu_items mi
-    LEFT JOIN categories c ON mi.category_id = c.id
-    ORDER BY c.sort_order, mi.sort_order, mi.name
-  `).all();
-}
-
-export function getMenuItemsByCategory(categoryId) {
-  return db.prepare(`
-    SELECT * FROM menu_items
-    WHERE category_id = ? AND available = 1
-    ORDER BY sort_order, name
-  `).all(categoryId);
-}
-
-export function getMenuItem(id) {
-  return db.prepare(`
-    SELECT mi.*, c.name as category_name
-    FROM menu_items mi
-    LEFT JOIN categories c ON mi.category_id = c.id
-    WHERE mi.id = ?
-  `).get(id);
-}
-
-export function createMenuItem(item) {
-  const stmt = db.prepare(`
-    INSERT INTO menu_items
-      (name, description, price, price_cents, category_id, image_url, available, sort_order)
-    VALUES (@name, @description, @price, @price_cents, @category_id, @image_url, @available, @sort_order)
+export async function getAllMenuItems(channel = 'cafe') {
+  return normalizeRows(await getSql()`
+    select mi.*, c.name as category_name,
+      exists(select 1 from public.item_modifier_groups img where img.item_id = mi.id) as has_modifiers
+    from public.menu_items mi
+    left join public.categories c on c.id = mi.category_id
+    where mi.available = true and mi.channel = ${channel}
+    order by c.sort_order, mi.sort_order, mi.name
   `);
-  const priceCents = dollarsToCents(item.price);
-  const result = stmt.run({
-    name: item.name,
-    description: item.description || '',
-    price: centsToDollars(priceCents),
-    price_cents: priceCents,
-    category_id: item.category_id || null,
-    image_url: item.image_url || null,
-    available: item.available !== undefined ? item.available : 1,
-    sort_order: item.sort_order || 0,
-  });
-  return result.lastInsertRowid;
 }
 
-export function updateMenuItem(id, updates) {
-  const allowedFields = ['name', 'description', 'price', 'category_id', 'image_url', 'available', 'sort_order'];
-  const filteredUpdates = {};
-  for (const key of allowedFields) {
-    if (updates[key] !== undefined) {
-      filteredUpdates[key] = updates[key];
-    }
-  }
-
-  if (Object.keys(filteredUpdates).length === 0) return null;
-
-  if (filteredUpdates.price !== undefined) {
-    const priceCents = dollarsToCents(filteredUpdates.price);
-    filteredUpdates.price = centsToDollars(priceCents);
-    filteredUpdates.price_cents = priceCents;
-  }
-
-  const fields = Object.keys(filteredUpdates).map(k => `${k} = @${k}`).join(', ');
-  const stmt = db.prepare(`UPDATE menu_items SET ${fields} WHERE id = @id`);
-  return stmt.run({ ...filteredUpdates, id });
+export async function getAllMenuItemsIncludingUnavailable() {
+  return normalizeRows(await getSql()`
+    select mi.*, c.name as category_name,
+      exists(select 1 from public.item_modifier_groups img where img.item_id = mi.id) as has_modifiers
+    from public.menu_items mi
+    left join public.categories c on c.id = mi.category_id
+    order by c.sort_order, mi.sort_order, mi.name
+  `);
 }
 
-export function deleteMenuItem(id) {
-  // Unlink from modifier groups first
-  db.prepare('DELETE FROM item_modifier_groups WHERE item_id = ?').run(id);
-  // Unlink from order_items
-  db.prepare('UPDATE order_items SET menu_item_id = NULL WHERE menu_item_id = ?').run(id);
-  return db.prepare('DELETE FROM menu_items WHERE id = ?').run(id);
+export async function getMenuItemsByCategory(categoryId, channel = 'cafe') {
+  return normalizeRows(await getSql()`
+    select * from public.menu_items
+    where category_id = ${categoryId} and available = true and channel = ${channel}
+    order by sort_order, name
+  `);
 }
 
-export function deleteAllMenuItems() {
-  db.prepare('UPDATE order_items SET menu_item_id = NULL').run();
-  db.prepare('DELETE FROM item_modifier_groups').run();
-  return db.prepare('DELETE FROM menu_items').run();
+export async function getMenuItem(id) {
+  const [row] = await getSql()`
+    select mi.*, c.name as category_name
+    from public.menu_items mi
+    left join public.categories c on c.id = mi.category_id
+    where mi.id = ${id}
+  `;
+  return normalizeRow(row);
+}
+
+export async function createMenuItem(item) {
+  const [row] = await getSql()`
+    insert into public.menu_items
+      (name, description, price_cents, category_id, image_url, available, sort_order)
+    values (
+      ${item.name}, ${item.description || ''}, ${dollarsToCents(item.price)},
+      ${item.category_id || null}, ${item.image_url || null},
+      ${item.available === undefined ? true : Boolean(item.available)}, ${item.sort_order || 0}
+    )
+    returning id
+  `;
+  return idNumber(row.id);
+}
+
+export async function updateMenuItem(id, updates) {
+  const sql = getSql();
+  const values = allowedUpdates(updates, ['name', 'description', 'category_id', 'image_url', 'available', 'sort_order']);
+  if (updates.price !== undefined) values.price_cents = dollarsToCents(updates.price);
+  if (values.available !== undefined) values.available = Boolean(values.available);
+  if (Object.keys(values).length === 0) return null;
+  return sql`update public.menu_items set ${sql(values)} where id = ${id}`;
+}
+
+export async function deleteMenuItem(id) {
+  return getSql()`delete from public.menu_items where id = ${id}`;
+}
+
+export async function deleteAllMenuItems() {
+  return getSql()`delete from public.menu_items`;
 }
 
 // ============ Modifier Group CRUD ============
-export function getAllModifierGroups() {
-  return db.prepare('SELECT * FROM modifier_groups ORDER BY sort_order').all();
+export async function getAllModifierGroups() {
+  return normalizeRows(await getSql()`select * from public.modifier_groups order by sort_order, name`);
 }
 
-export function getModifierGroup(id) {
-  return db.prepare('SELECT * FROM modifier_groups WHERE id = ?').get(id);
+export async function getModifierGroup(id) {
+  const [row] = await getSql()`select * from public.modifier_groups where id = ${id}`;
+  return normalizeRow(row);
 }
 
-export function getModifierGroupByName(name) {
-  return db.prepare('SELECT * FROM modifier_groups WHERE name = ?').get(name);
+export async function getModifierGroupByName(name) {
+  const [row] = await getSql()`select * from public.modifier_groups where name = ${name}`;
+  return normalizeRow(row);
 }
 
-export function getModifierGroupWithOptions(id) {
-  const group = getModifierGroup(id);
-  if (group) {
-    group.options = getModifierOptions(id);
-  }
+export async function getModifierGroupWithOptions(id) {
+  const group = await getModifierGroup(id);
+  if (group) group.options = await getModifierOptions(id);
   return group;
 }
 
-export function createModifierGroup(group) {
-  const stmt = db.prepare(`
-    INSERT INTO modifier_groups (name, display_name, min_selections, max_selections, required, sort_order)
-    VALUES (@name, @display_name, @min_selections, @max_selections, @required, @sort_order)
-  `);
-  const result = stmt.run({
-    name: group.name,
-    display_name: group.display_name || group.name,
-    min_selections: group.min_selections || 0,
-    max_selections: group.max_selections || 10,
-    required: group.required || 0,
-    sort_order: group.sort_order || 0,
-  });
-  return result.lastInsertRowid;
+export async function createModifierGroup(group) {
+  const [row] = await getSql()`
+    insert into public.modifier_groups
+      (name, display_name, min_selections, max_selections, required, sort_order)
+    values (
+      ${group.name}, ${group.display_name || group.name}, ${group.min_selections || 0},
+      ${group.max_selections || 10}, ${Boolean(group.required)}, ${group.sort_order || 0}
+    )
+    returning id
+  `;
+  return idNumber(row.id);
 }
 
-export function updateModifierGroup(id, updates) {
-  const allowedFields = ['name', 'display_name', 'min_selections', 'max_selections', 'required', 'sort_order'];
-  const filteredUpdates = {};
-  for (const key of allowedFields) {
-    if (updates[key] !== undefined) {
-      filteredUpdates[key] = updates[key];
-    }
-  }
-
-  if (Object.keys(filteredUpdates).length === 0) return null;
-
-  const fields = Object.keys(filteredUpdates).map(k => `${k} = @${k}`).join(', ');
-  const stmt = db.prepare(`UPDATE modifier_groups SET ${fields} WHERE id = @id`);
-  return stmt.run({ ...filteredUpdates, id });
+export async function updateModifierGroup(id, updates) {
+  const sql = getSql();
+  const values = allowedUpdates(updates, ['name', 'display_name', 'min_selections', 'max_selections', 'required', 'sort_order']);
+  if (values.required !== undefined) values.required = Boolean(values.required);
+  if (Object.keys(values).length === 0) return null;
+  return sql`update public.modifier_groups set ${sql(values)} where id = ${id}`;
 }
 
-export function deleteModifierGroup(id) {
-  // Options will be deleted via CASCADE
-  // Unlink from items
-  db.prepare('DELETE FROM item_modifier_groups WHERE group_id = ?').run(id);
-  return db.prepare('DELETE FROM modifier_groups WHERE id = ?').run(id);
+export async function deleteModifierGroup(id) {
+  return getSql()`delete from public.modifier_groups where id = ${id}`;
 }
 
-export function deleteAllModifierGroups() {
-  db.prepare('DELETE FROM item_modifier_groups').run();
-  db.prepare('DELETE FROM modifier_options').run();
-  return db.prepare('DELETE FROM modifier_groups').run();
+export async function deleteAllModifierGroups() {
+  return getSql()`delete from public.modifier_groups`;
 }
 
 // ============ Modifier Option CRUD ============
-export function getModifierOptions(groupId) {
-  return db.prepare(`
-    SELECT * FROM modifier_options
-    WHERE group_id = ? AND available = 1
-    ORDER BY sort_order, name
-  `).all(groupId);
-}
-
-export function getAllModifierOptions() {
-  return db.prepare(`
-    SELECT mo.*, mg.name as group_name, mg.display_name as group_display_name
-    FROM modifier_options mo
-    LEFT JOIN modifier_groups mg ON mo.group_id = mg.id
-    WHERE mo.available = 1
-    ORDER BY mg.sort_order, mo.sort_order, mo.name
-  `).all();
-}
-
-export function getModifierOption(id) {
-  return db.prepare('SELECT * FROM modifier_options WHERE id = ?').get(id);
-}
-
-// Look up modifier option by name or display_name for price verification
-export function getModifierOptionByName(name) {
-  return db.prepare(`
-    SELECT * FROM modifier_options
-    WHERE name = ? OR display_name = ?
-    LIMIT 1
-  `).get(name, name);
-}
-
-export function createModifierOption(option) {
-  const stmt = db.prepare(`
-    INSERT INTO modifier_options
-      (group_id, name, display_name, price_adjustment, price_adjustment_cents, available, sort_order)
-    VALUES (@group_id, @name, @display_name, @price_adjustment, @price_adjustment_cents, @available, @sort_order)
+export async function getModifierOptions(groupId, includeUnavailable = false) {
+  return normalizeRows(await getSql()`
+    select * from public.modifier_options
+    where group_id = ${groupId} and (${includeUnavailable} or available = true)
+    order by sort_order, name
   `);
-  const adjustmentCents = dollarsToCents(option.price_adjustment);
-  const result = stmt.run({
-    group_id: option.group_id,
-    name: option.name,
-    display_name: option.display_name || option.name,
-    price_adjustment: centsToDollars(adjustmentCents),
-    price_adjustment_cents: adjustmentCents,
-    available: option.available !== undefined ? option.available : 1,
-    sort_order: option.sort_order || 0,
-  });
-  return result.lastInsertRowid;
 }
 
-export function updateModifierOption(id, updates) {
-  const allowedFields = ['name', 'display_name', 'price_adjustment', 'available', 'sort_order', 'group_id'];
-  const filteredUpdates = {};
-  for (const key of allowedFields) {
-    if (updates[key] !== undefined) {
-      filteredUpdates[key] = updates[key];
-    }
+export async function getAllModifierOptions(includeUnavailable = false) {
+  return normalizeRows(await getSql()`
+    select mo.*, mg.name as group_name, mg.display_name as group_display_name
+    from public.modifier_options mo
+    left join public.modifier_groups mg on mg.id = mo.group_id
+    where ${includeUnavailable} or mo.available = true
+    order by mg.sort_order, mo.sort_order, mo.name
+  `);
+}
+
+export async function getModifierOption(id) {
+  const [row] = await getSql()`select * from public.modifier_options where id = ${id}`;
+  return normalizeRow(row);
+}
+
+export async function getModifierOptionByName(name) {
+  const [row] = await getSql()`
+    select * from public.modifier_options
+    where name = ${name} or display_name = ${name}
+    order by id limit 1
+  `;
+  return normalizeRow(row);
+}
+
+export async function createModifierOption(option) {
+  const [row] = await getSql()`
+    insert into public.modifier_options
+      (group_id, name, display_name, price_adjustment_cents, available, sort_order)
+    values (
+      ${option.group_id}, ${option.name}, ${option.display_name || option.name},
+      ${dollarsToCents(option.price_adjustment)},
+      ${option.available === undefined ? true : Boolean(option.available)}, ${option.sort_order || 0}
+    )
+    returning id
+  `;
+  return idNumber(row.id);
+}
+
+export async function updateModifierOption(id, updates) {
+  const sql = getSql();
+  const values = allowedUpdates(updates, ['name', 'display_name', 'available', 'sort_order', 'group_id']);
+  if (updates.price_adjustment !== undefined) {
+    values.price_adjustment_cents = dollarsToCents(updates.price_adjustment);
   }
-
-  if (Object.keys(filteredUpdates).length === 0) return null;
-
-  if (filteredUpdates.price_adjustment !== undefined) {
-    const adjustmentCents = dollarsToCents(filteredUpdates.price_adjustment);
-    filteredUpdates.price_adjustment = centsToDollars(adjustmentCents);
-    filteredUpdates.price_adjustment_cents = adjustmentCents;
-  }
-
-  const fields = Object.keys(filteredUpdates).map(k => `${k} = @${k}`).join(', ');
-  const stmt = db.prepare(`UPDATE modifier_options SET ${fields} WHERE id = @id`);
-  return stmt.run({ ...filteredUpdates, id });
+  if (values.available !== undefined) values.available = Boolean(values.available);
+  if (Object.keys(values).length === 0) return null;
+  return sql`update public.modifier_options set ${sql(values)} where id = ${id}`;
 }
 
-export function deleteModifierOption(id) {
-  return db.prepare('DELETE FROM modifier_options WHERE id = ?').run(id);
+export async function deleteModifierOption(id) {
+  return getSql()`delete from public.modifier_options where id = ${id}`;
 }
 
-export function deleteAllModifierOptions() {
-  return db.prepare('DELETE FROM modifier_options').run();
+export async function deleteAllModifierOptions() {
+  return getSql()`delete from public.modifier_options`;
 }
 
 // ============ Item-Modifier Group Linking ============
-export function getModifiersForItem(itemId) {
-  const groups = db.prepare(`
-    SELECT mg.*
-    FROM item_modifier_groups img
-    JOIN modifier_groups mg ON img.group_id = mg.id
-    WHERE img.item_id = ?
-    ORDER BY mg.sort_order
-  `).all(itemId);
-
-  // Get options for each group
-  for (const group of groups) {
-    group.options = getModifierOptions(group.id);
-  }
-
+export async function getModifiersForItem(itemId) {
+  const groups = normalizeRows(await getSql()`
+    select mg.*
+    from public.item_modifier_groups img
+    join public.modifier_groups mg on mg.id = img.group_id
+    where img.item_id = ${itemId}
+    order by mg.sort_order, mg.name
+  `);
+  await Promise.all(groups.map(async group => {
+    group.options = await getModifierOptions(group.id);
+  }));
   return groups;
 }
 
-export function getItemsForModifierGroup(groupId) {
-  return db.prepare(`
-    SELECT mi.*, c.name as category_name
-    FROM item_modifier_groups img
-    JOIN menu_items mi ON img.item_id = mi.id
-    LEFT JOIN categories c ON mi.category_id = c.id
-    WHERE img.group_id = ?
-    ORDER BY c.sort_order, mi.sort_order, mi.name
-  `).all(groupId);
-}
-
-export function linkItemToModifierGroup(itemId, groupId) {
-  const stmt = db.prepare('INSERT OR IGNORE INTO item_modifier_groups (item_id, group_id) VALUES (?, ?)');
-  return stmt.run(itemId, groupId);
-}
-
-export function unlinkItemFromModifierGroup(itemId, groupId) {
-  const stmt = db.prepare('DELETE FROM item_modifier_groups WHERE item_id = ? AND group_id = ?');
-  return stmt.run(itemId, groupId);
-}
-
-export function setItemModifierGroups(itemId, groupIds) {
-  // Remove all existing links
-  db.prepare('DELETE FROM item_modifier_groups WHERE item_id = ?').run(itemId);
-
-  // Add new links
-  const insert = db.prepare('INSERT INTO item_modifier_groups (item_id, group_id) VALUES (?, ?)');
-  for (const groupId of groupIds) {
-    insert.run(itemId, groupId);
-  }
-}
-
-export function clearItemModifierLinks() {
-  return db.prepare('DELETE FROM item_modifier_groups').run();
-}
-
-// ============ Orders ============
-export function createOrder(order) {
-  const pickupNumber = getNextPickupNumber();
-  const stmt = db.prepare(`
-    INSERT INTO orders (pickup_number, customer_name, email, status, subtotal, tax, total, notes)
-    VALUES (@pickup_number, @customer_name, @email, @status, @subtotal, @tax, @total, @notes)
+export async function getItemsForModifierGroup(groupId) {
+  return normalizeRows(await getSql()`
+    select mi.*, c.name as category_name
+    from public.item_modifier_groups img
+    join public.menu_items mi on mi.id = img.item_id
+    left join public.categories c on c.id = mi.category_id
+    where img.group_id = ${groupId}
+    order by c.sort_order, mi.sort_order, mi.name
   `);
-  const result = stmt.run({
-    ...order,
-    pickup_number: pickupNumber,
-    status: 'pending',
-    email: order.email || null,
+}
+
+export async function linkItemToModifierGroup(itemId, groupId) {
+  return getSql()`
+    insert into public.item_modifier_groups (item_id, group_id)
+    values (${itemId}, ${groupId}) on conflict do nothing
+  `;
+}
+
+export async function setItemModifierGroups(itemId, groupIds) {
+  const sql = getSql();
+  return sql.begin(async tx => {
+    await tx`delete from public.item_modifier_groups where item_id = ${itemId}`;
+    for (const groupId of groupIds) {
+      await tx`
+        insert into public.item_modifier_groups (item_id, group_id)
+        values (${itemId}, ${groupId})
+      `;
+    }
   });
-  return { id: result.lastInsertRowid, pickup_number: pickupNumber };
 }
 
-export function getOrder(id) {
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
-  if (!order) return null;
-
-  order.items = db.prepare(`
-    SELECT oi.*,
-      (SELECT GROUP_CONCAT(oim.modifier_name || CASE WHEN oim.price_adjustment > 0 THEN ' (+$' || printf('%.2f', oim.price_adjustment) || ')' ELSE '' END, ', ')
-       FROM order_item_modifiers oim WHERE oim.order_item_id = oi.id) as modifiers
-    FROM order_items oi
-    WHERE oi.order_id = ?
-  `).all(id);
-
-  return decorateOrder(order);
+export async function clearItemModifierLinks() {
+  return getSql()`delete from public.item_modifier_groups`;
 }
 
-export function getActiveOrders() {
-  const orders = db.prepare(`
-    SELECT * FROM orders
-    WHERE status IN ('pending', 'preparing', 'ready')
-      AND (
-        payment_status IN ('authorized', 'paid')
-        OR (payment_status = 'unpaid' AND payment_method = 'cash')
-      )
-    ORDER BY
-      CASE status
-        WHEN 'pending' THEN 1
-        WHEN 'preparing' THEN 2
-        WHEN 'ready' THEN 3
-      END,
-      created_at ASC
-  `).all();
+function itemModifierTextSql(sql) {
+  return sql`
+    coalesce(
+      string_agg(
+        oim.modifier_name || case
+          when oim.price_adjustment_cents > 0
+            then ' (+$' || to_char(oim.price_adjustment_cents / 100.0, 'FM999999990.00') || ')'
+          else ''
+        end,
+        ', ' order by oim.id
+      ) filter (where oim.id is not null),
+      ''
+    ) as modifiers
+  `;
+}
 
-  const getItems = db.prepare(`
-    SELECT oi.*,
-      (SELECT GROUP_CONCAT(oim.modifier_name || CASE WHEN oim.price_adjustment > 0 THEN ' (+$' || printf('%.2f', oim.price_adjustment) || ')' ELSE '' END, ', ')
-       FROM order_item_modifiers oim WHERE oim.order_item_id = oi.id) as modifiers
-    FROM order_items oi
-    WHERE oi.order_id = ?
-  `);
+async function loadOrderItems(tx, orderIds) {
+  if (orderIds.length === 0) return [];
+  const rows = await tx`
+    select oi.*, ${itemModifierTextSql(tx)}
+    from public.order_items oi
+    left join public.order_item_modifiers oim on oim.order_item_id = oi.id
+    where oi.order_id in ${tx(orderIds)}
+    group by oi.id
+    order by oi.id
+  `;
+  return normalizeRows(rows);
+}
 
-  for (const order of orders) {
-    order.items = getItems.all(order.id);
+async function hydrateOrders(tx, rows) {
+  const orders = normalizeRows(rows);
+  const items = await loadOrderItems(tx, orders.map(order => order.id));
+  const byOrder = new Map();
+  for (const item of items) {
+    const bucket = byOrder.get(item.order_id) || [];
+    bucket.push(item);
+    byOrder.set(item.order_id, bucket);
   }
-
-  return orders.map(decorateOrder);
+  for (const order of orders) order.items = byOrder.get(order.id) || [];
+  return orders;
 }
 
-export function updateOrderStatus(id, status) {
-  const stmt = db.prepare('UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
-  return stmt.run(status, id);
+async function loadOrderByInternalId(id, tx = getSql()) {
+  const rows = await tx`select * from public.orders where id = ${id}`;
+  const [order] = await hydrateOrders(tx, rows);
+  return order || null;
 }
 
-// Cancel an order. Returns { ok: true, order } on success, or
-// { ok: false, code, message, order } when the transition is not allowed.
-// `source` is 'customer' or 'staff'; customers can only cancel while pending,
-// staff may cancel any active order (pending | preparing | ready).
-export function cancelOrder(id, { reason = null, source = 'customer', actorSubject = null } = {}) {
-  const cancel = db.transaction(() => {
-    const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
-    if (!order) return { ok: false, code: 'not_found', message: 'Order not found' };
-
-    if (order.status === 'cancelled' || order.status === 'completed') {
-      return { ok: false, code: 'final_state', message: `Order is already ${order.status}`, order };
-    }
-
-    if (source === 'customer' && order.status !== 'pending') {
-      return {
-        ok: false,
-        code: 'too_late',
-        message: 'This order is already being prepared. Please come to the counter for help.',
-        order,
-      };
-    }
-
-    if (source !== 'customer' && source !== 'staff') {
-      return { ok: false, code: 'invalid_actor', message: 'Invalid cancellation actor', order };
-    }
-
-    const trimmedReason = typeof reason === 'string' ? reason.trim().slice(0, 500) : null;
-
-    db.prepare(`
-      UPDATE orders
-      SET status = 'cancelled',
-          cancellation_reason = ?,
-          cancelled_by = ?,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(trimmedReason || null, source, id);
-
-    insertLifecycleEvent({
-      orderId: id,
-      fromStatus: order.status,
-      toStatus: 'cancelled',
-      actorType: source === 'staff' ? 'staff' : 'customer',
-      actorSubject,
-      metadata: { reason: trimmedReason || null },
-    });
-
-    return { ok: true, orderId: id };
-  });
-
-  const result = cancel();
-  if (!result.ok) {
-    return result.order ? { ...result, order: getOrder(id) } : result;
-  }
-  return { ok: true, order: getOrder(result.orderId) };
+export async function getOrder(id) {
+  return loadOrderByInternalId(id);
 }
 
-// Returns ready-status orders whose 'ready' transition (updated_at) is at least
-// `minutesOld` minutes ago and have not yet received a pickup reminder. Only
-// includes orders with a customer email — others can't be reminded.
-export function getOrdersAwaitingPickupReminder(minutesOld = 10) {
-  return db.prepare(`
-    SELECT id
-    FROM orders
-    WHERE status = 'ready'
-      AND email IS NOT NULL
-      AND email != ''
-      AND pickup_reminder_sent = 0
-      AND (payment_status IN ('authorized', 'paid')
-        OR (payment_status = 'unpaid' AND payment_method = 'cash'))
-      AND updated_at <= datetime('now', ?)
-  `).all(`-${minutesOld} minutes`);
+export async function getActiveOrders(channel = 'cafe') {
+  const sql = getSql();
+  const rows = await sql`
+    select * from public.orders
+    where status in ('pending', 'preparing', 'ready')
+      and channel = ${channel}
+      and (payment_status in ('authorized', 'paid')
+        or (payment_status = 'unpaid' and payment_method = 'cash'))
+    order by case status
+      when 'pending' then 1 when 'preparing' then 2 when 'ready' then 3 end,
+      created_at asc
+  `;
+  return hydrateOrders(sql, rows);
 }
 
-export function markPickupReminderSent(id) {
-  return db.prepare('UPDATE orders SET pickup_reminder_sent = 1 WHERE id = ?').run(id);
+export async function getOrderByPublicId(publicId) {
+  const [row] = await getSql()`select id from public.orders where public_id = ${publicId}`;
+  return row ? loadOrderByInternalId(row.id) : null;
 }
 
-export function addOrderItem(orderItem) {
-  const stmt = db.prepare(`
-    INSERT INTO order_items (order_id, menu_item_id, item_name, quantity, unit_price, total_price, special_instructions)
-    VALUES (@order_id, @menu_item_id, @item_name, @quantity, @unit_price, @total_price, @special_instructions)
-  `);
-  const result = stmt.run(orderItem);
-  return result.lastInsertRowid;
+export async function getOrderForCustomer(publicId, customerId) {
+  const [row] = await getSql()`
+    select id from public.orders where public_id = ${publicId} and customer_id = ${customerId}
+  `;
+  return row ? loadOrderByInternalId(row.id) : null;
 }
 
-export function addOrderItemModifier(modifier) {
-  const stmt = db.prepare(`
-    INSERT INTO order_item_modifiers (order_item_id, modifier_name, price_adjustment)
-    VALUES (@order_item_id, @modifier_name, @price_adjustment)
-  `);
-  return stmt.run(modifier);
+export async function getOrderByIdempotency(customerId, idempotencyKey) {
+  const [row] = await getSql()`
+    select id from public.orders
+    where customer_id = ${customerId} and idempotency_key = ${idempotencyKey}
+  `;
+  return row ? loadOrderByInternalId(row.id) : null;
 }
 
-// ============ Revival order domain ==========
-
-function decorateOrder(order) {
-  if (!order) return null;
-
-  const subtotalCents = Number.isInteger(order.subtotal_cents)
-    ? order.subtotal_cents
-    : dollarsToCents(order.subtotal);
-  const taxCents = Number.isInteger(order.tax_cents)
-    ? order.tax_cents
-    : dollarsToCents(order.tax);
-  const totalCents = Number.isInteger(order.total_cents)
-    ? order.total_cents
-    : dollarsToCents(order.total);
-
-  order.subtotal_cents = subtotalCents;
-  order.tax_cents = taxCents;
-  order.total_cents = totalCents;
-  // Compatibility projections. Pricing decisions never use these decimals.
-  order.subtotal = centsToDollars(subtotalCents);
-  order.tax = centsToDollars(taxCents);
-  order.total = centsToDollars(totalCents);
-  if (Array.isArray(order.items)) {
-    order.items = order.items.map(item => {
-      const unitCents = Number.isInteger(item.unit_price_cents)
-        ? item.unit_price_cents
-        : dollarsToCents(item.unit_price);
-      const totalItemCents = Number.isInteger(item.total_price_cents)
-        ? item.total_price_cents
-        : dollarsToCents(item.total_price);
-      return {
-        ...item,
-        unit_price_cents: unitCents,
-        total_price_cents: totalItemCents,
-        unit_price: centsToDollars(unitCents),
-        total_price: centsToDollars(totalItemCents),
-      };
-    });
-  }
-  return order;
+export async function getCustomerBySubject(subject) {
+  return subject ? { id: subject, upstream_subject: subject } : null;
 }
 
-function loadOrderByInternalId(id) {
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
-  if (!order) return null;
-  order.items = db.prepare(`
-    SELECT oi.*,
-      (SELECT GROUP_CONCAT(oim.modifier_name || CASE
-        WHEN oim.price_adjustment_cents != 0
-        THEN ' (' || CASE WHEN oim.price_adjustment_cents > 0 THEN '+$' ELSE '-$' END
-          || printf('%.2f', ABS(oim.price_adjustment_cents) / 100.0) || ')'
-        ELSE '' END, ', ')
-       FROM order_item_modifiers oim WHERE oim.order_item_id = oi.id) as modifiers
-    FROM order_items oi
-    WHERE oi.order_id = ?
-    ORDER BY oi.id
-  `).all(id);
-  return decorateOrder(order);
-}
-
-export function getOrderByPublicId(publicId) {
-  const order = db.prepare('SELECT id FROM orders WHERE public_id = ?').get(publicId);
-  return order ? loadOrderByInternalId(order.id) : null;
-}
-
-export function getOrderForCustomer(publicId, customerId) {
-  const order = db.prepare(
-    'SELECT id FROM orders WHERE public_id = ? AND customer_id = ?',
-  ).get(publicId, customerId);
-  return order ? loadOrderByInternalId(order.id) : null;
-}
-
-export function getOrderByIdempotency(customerId, idempotencyKey) {
-  const order = db.prepare(
-    'SELECT id FROM orders WHERE customer_id = ? AND idempotency_key = ?',
-  ).get(customerId, idempotencyKey);
-  return order ? loadOrderByInternalId(order.id) : null;
-}
-
-export function getCustomerBySubject(subject) {
-  return db.prepare('SELECT * FROM customers WHERE upstream_subject = ?').get(subject) || null;
-}
-
-export function getOrCreateCustomer(subject) {
+export async function getOrCreateCustomer(subject) {
   if (!subject || typeof subject !== 'string') {
     throw new Error('A verified customer subject is required');
   }
-  const existing = getCustomerBySubject(subject);
-  if (existing) return existing;
-
-  const customer = { id: crypto.randomUUID(), upstream_subject: subject };
-  try {
-    db.prepare(`
-      INSERT INTO customers (id, upstream_subject) VALUES (?, ?)
-    `).run(customer.id, customer.upstream_subject);
-    return customer;
-  } catch (error) {
-    // A concurrent request may have inserted the same upstream subject.
-    if (String(error.code || '').startsWith('SQLITE_CONSTRAINT')) {
-      const raced = getCustomerBySubject(subject);
-      if (raced) return raced;
-    }
-    throw error;
-  }
+  return { id: subject, upstream_subject: subject };
 }
 
-function insertLifecycleEvent({ orderId, fromStatus = null, toStatus, actorType, actorSubject = null, metadata = null }) {
-  db.prepare(`
-    INSERT INTO order_lifecycle_events
-      (id, order_id, from_status, to_status, actor_type, actor_subject, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    crypto.randomUUID(),
-    orderId,
-    fromStatus,
-    toStatus,
-    actorType,
-    actorSubject,
-    metadata ? JSON.stringify(metadata) : null,
-  );
-}
-
-/**
- * Creates an order, its line items, modifiers, and initial lifecycle event in
- * one SQLite transaction. The caller must provide server-verified cents and
- * product snapshots; this function intentionally has no client-price path.
- */
-export function createOrderWithItems({
+export async function createOrderWithItems({
   customerId,
   idempotencyKey,
   requestHash,
@@ -824,119 +446,491 @@ export function createOrderWithItems({
   totalCents,
   items,
   actorSubject = null,
-  paymentStatus = 'unpaid',
-  paymentMethod = LEGACY_CASH_PAYMENT_METHOD,
+  channel = 'cafe',
+  partnerId = null,
+  preorderDeadline = null,
+  preorderDeliveryDate = null,
+  pickupWindowStart = null,
+  pickupWindowEnd = null,
+  paymentStatus = 'pending',
+  paymentMethod = channel === 'cafe' ? 'square' : 'stripe',
+  paymentProvider = channel === 'cafe' ? 'square' : 'stripe',
 }) {
-  const create = db.transaction(() => {
-    const pickupNumber = getNextPickupNumber();
-    const publicId = crypto.randomUUID();
-    const result = db.prepare(`
-      INSERT INTO orders (
-        public_id, customer_id, idempotency_key, request_hash,
-        pickup_number, customer_name, email, status,
-      subtotal, tax, total, subtotal_cents, tax_cents, total_cents,
-        notes, payment_status, payment_method
-      ) VALUES (
-        @public_id, @customer_id, @idempotency_key, @request_hash,
-        @pickup_number, @customer_name, @email, 'pending',
-        @subtotal, @tax, @total, @subtotal_cents, @tax_cents, @total_cents,
-        @notes, @payment_status, @payment_method
+  const sql = getSql();
+  return sql.begin(async tx => {
+    const [counter] = await tx`
+      insert into private.pickup_counters (service_date, current_number)
+      values (current_date, 1)
+      on conflict (service_date) do update
+        set current_number = private.pickup_counters.current_number + 1
+      returning current_number
+    `;
+    const [created] = await tx`
+      insert into public.orders (
+        customer_id, idempotency_key, request_hash, pickup_number,
+        customer_name, email, subtotal_cents, tax_cents, total_cents,
+        notes, channel, partner_id, preorder_deadline, preorder_delivery_date,
+        pickup_window_start, pickup_window_end,
+        payment_status, payment_method, payment_provider
+      ) values (
+        ${customerId}, ${idempotencyKey}, ${requestHash}, ${counter.current_number},
+        ${customerName}, ${email}, ${subtotalCents}, ${taxCents}, ${totalCents},
+        ${notes}, ${channel}, ${partnerId}, ${preorderDeadline}, ${preorderDeliveryDate},
+        ${pickupWindowStart}, ${pickupWindowEnd},
+        ${paymentStatus}, ${paymentMethod}, ${paymentProvider}
       )
-    `).run({
-      public_id: publicId,
-      customer_id: customerId,
-      idempotency_key: idempotencyKey,
-      request_hash: requestHash,
-      pickup_number: pickupNumber,
-      customer_name: customerName,
-      email,
-      subtotal: centsToDollars(subtotalCents),
-      tax: centsToDollars(taxCents),
-      total: centsToDollars(totalCents),
-      subtotal_cents: subtotalCents,
-      tax_cents: taxCents,
-      total_cents: totalCents,
-      notes,
-      payment_status: paymentStatus,
-      payment_method: paymentMethod,
-    });
-    const orderId = Number(result.lastInsertRowid);
-
-    const insertItem = db.prepare(`
-      INSERT INTO order_items (
-        order_id, menu_item_id, item_name, quantity,
-        unit_price, total_price, unit_price_cents, total_price_cents,
-        special_instructions
-      ) VALUES (
-        @order_id, @menu_item_id, @item_name, @quantity,
-        @unit_price, @total_price, @unit_price_cents, @total_price_cents,
-        @special_instructions
-      )
-    `);
-    const insertModifier = db.prepare(`
-      INSERT INTO order_item_modifiers (
-        order_item_id, modifier_option_id, modifier_name,
-        price_adjustment, price_adjustment_cents
-      ) VALUES (
-        @order_item_id, @modifier_option_id, @modifier_name,
-        @price_adjustment, @price_adjustment_cents
-      )
-    `);
+      returning id, public_id, pickup_number
+    `;
 
     for (const item of items) {
-      const itemResult = insertItem.run({
-        order_id: orderId,
-        menu_item_id: item.menuItemId,
-        item_name: item.itemName,
-        quantity: item.quantity,
-        unit_price: centsToDollars(item.unitPriceCents),
-        total_price: centsToDollars(item.totalPriceCents),
-        unit_price_cents: item.unitPriceCents,
-        total_price_cents: item.totalPriceCents,
-        special_instructions: item.specialInstructions || null,
-      });
-      const orderItemId = Number(itemResult.lastInsertRowid);
+      const [orderItem] = await tx`
+        insert into public.order_items (
+          order_id, menu_item_id, item_name, quantity,
+          unit_price_cents, total_price_cents, special_instructions
+        ) values (
+          ${created.id}, ${item.menuItemId}, ${item.itemName}, ${item.quantity},
+          ${item.unitPriceCents}, ${item.totalPriceCents}, ${item.specialInstructions || null}
+        ) returning id
+      `;
       for (const modifier of item.modifiers) {
-        insertModifier.run({
-          order_item_id: orderItemId,
-          modifier_option_id: modifier.modifierOptionId,
-          modifier_name: modifier.name,
-          price_adjustment: centsToDollars(modifier.priceAdjustmentCents),
-          price_adjustment_cents: modifier.priceAdjustmentCents,
-        });
+        await tx`
+          insert into public.order_item_modifiers (
+            order_item_id, modifier_option_id, modifier_name, price_adjustment_cents
+          ) values (
+            ${orderItem.id}, ${modifier.modifierOptionId}, ${modifier.name},
+            ${modifier.priceAdjustmentCents}
+          )
+        `;
       }
     }
 
-    insertLifecycleEvent({
-      orderId,
-      toStatus: 'pending',
-      actorType: 'customer',
-      actorSubject,
-      metadata: { payment_status: paymentStatus, payment_method: paymentMethod },
-    });
-    return { id: orderId, public_id: publicId, pickup_number: pickupNumber };
+    await tx`
+      insert into public.order_lifecycle_events
+        (order_id, to_status, actor_type, actor_subject, metadata)
+      values (
+        ${created.id}, 'pending', 'customer', ${actorSubject},
+        ${tx.json({
+          channel,
+          payment_status: paymentStatus,
+          payment_method: paymentMethod,
+          payment_provider: paymentProvider,
+          preorder_deadline: preorderDeadline,
+          preorder_delivery_date: preorderDeliveryDate,
+        })}
+      )
+    `;
+    return {
+      id: idNumber(created.id),
+      public_id: created.public_id,
+      pickup_number: created.pickup_number,
+      order: await loadOrderByInternalId(created.id, tx),
+    };
   });
-
-  const created = create();
-  return {
-    ...created,
-    order: loadOrderByInternalId(created.id),
-  };
 }
 
-export function transitionOrderStatus(id, status, { actorType = 'staff', actorSubject = null } = {}) {
-  const transition = db.transaction(() => {
-    const current = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+export async function createPaymentAttempt({
+  orderId,
+  provider,
+  idempotencyKey,
+  amountCents,
+  metadata = {},
+}) {
+  const [row] = await getSql()`
+    insert into public.payments
+      (order_id, provider, status, amount_cents, idempotency_key, metadata)
+    values (
+      ${orderId}, ${provider}, 'pending', ${amountCents},
+      ${idempotencyKey}, ${getSql().json(metadata)}
+    )
+    on conflict (provider, idempotency_key) do update
+      set updated_at = now()
+    returning *
+  `;
+  return normalizeRow(row);
+}
+
+export async function updatePaymentAttempt(id, {
+  status,
+  externalReference = null,
+  providerEventId = null,
+  metadata = {},
+}) {
+  const sql = getSql();
+  const [row] = await sql`
+    update public.payments set
+      status = case
+        when status in ('paid', 'refunded') and ${status} <> 'refunded' then status
+        when status = 'authorized' and ${status} in ('pending', 'failed') then status
+        else ${status}
+      end,
+      external_reference = coalesce(${externalReference}, external_reference),
+      provider_event_id = coalesce(${providerEventId}, provider_event_id),
+      metadata = coalesce(metadata, '{}'::jsonb) || ${sql.json(metadata)}::jsonb
+    where id = ${id}
+    returning *
+  `;
+  return normalizeRow(row);
+}
+
+export async function setOrderPaymentState(orderId, {
+  provider,
+  status,
+  externalReference = null,
+  providerEventId = null,
+  paymentId = null,
+  metadata = {},
+}) {
+  const sql = getSql();
+  return sql.begin(async tx => {
+    const [order] = await tx`select * from public.orders where id = ${orderId} for update`;
+    if (!order) return null;
+    const priorPaymentStatus = order.payment_status;
+    const [updatedOrder] = await tx`
+      update public.orders set
+        payment_status = case
+          when payment_status in ('paid', 'refunded') and ${status} <> 'refunded' then payment_status
+          when payment_status = 'authorized' and ${status} in ('pending', 'failed') then payment_status
+          else ${status}
+        end,
+        payment_provider = ${provider},
+        payment_method = ${provider},
+        payment_reference = coalesce(${externalReference}, payment_reference),
+        payment_updated_at = now()
+      where id = ${orderId}
+      returning payment_status
+    `;
+    await tx`
+      update public.payments set
+        status = case
+          when status in ('paid', 'refunded') and ${status} <> 'refunded' then status
+          when status = 'authorized' and ${status} in ('pending', 'failed') then status
+          else ${status}
+        end,
+        external_reference = coalesce(${externalReference}, external_reference),
+        provider_event_id = coalesce(${providerEventId}, provider_event_id),
+        metadata = coalesce(metadata, '{}'::jsonb) || ${tx.json(metadata)}::jsonb
+      where order_id = ${orderId} and provider = ${provider}
+        and (
+          (${paymentId}::uuid is not null and id = ${paymentId})
+          or (${paymentId}::uuid is null and external_reference = ${externalReference})
+        )
+    `;
+    const hydrated = await loadOrderByInternalId(orderId, tx);
+    hydrated.payment_transitioned_to_paid = priorPaymentStatus !== 'paid'
+      && updatedOrder.payment_status === 'paid';
+    return hydrated;
+  });
+}
+
+export async function getOrderByPaymentReference(provider, reference) {
+  const [row] = await getSql()`
+    select id from public.orders
+    where payment_provider = ${provider} and payment_reference = ${reference}
+  `;
+  return row ? loadOrderByInternalId(row.id) : null;
+}
+
+export async function claimPaymentWebhookEvent({
+  provider,
+  providerEventId,
+  eventType,
+  payloadSha256,
+}) {
+  const sql = getSql();
+  return sql.begin(async tx => {
+    const inserted = await tx`
+      insert into public.payment_webhook_events
+        (provider, provider_event_id, event_type, payload_sha256)
+      values (${provider}, ${providerEventId}, ${eventType}, ${payloadSha256})
+      on conflict (provider, provider_event_id) do nothing
+      returning *
+    `;
+    if (inserted[0]) return { claimed: true, event: normalizeRow(inserted[0]) };
+    const [existing] = await tx`
+      select *, (
+        processing_status = 'failed'
+        or (
+          processing_status = 'processing'
+          and last_attempt_at <= now() - interval '5 minutes'
+        )
+      ) as retryable
+      from public.payment_webhook_events
+      where provider = ${provider} and provider_event_id = ${providerEventId}
+      for update
+    `;
+    if (!existing.retryable) {
+      return { claimed: false, event: normalizeRow(existing) };
+    }
+    const [retried] = await tx`
+      update public.payment_webhook_events set
+        processing_status = 'processing',
+        attempt_count = attempt_count + 1,
+        last_attempt_at = now(),
+        last_error = null,
+        payload_sha256 = ${payloadSha256}
+      where id = ${existing.id}
+      returning *
+    `;
+    return { claimed: true, event: normalizeRow(retried) };
+  });
+}
+
+export async function completePaymentWebhookEvent(id, error = null) {
+  return getSql()`
+    update public.payment_webhook_events set
+      processing_status = ${error ? 'failed' : 'processed'},
+      processed_at = ${error ? null : new Date()},
+      last_error = ${error ? String(error).slice(0, 1000) : null}
+    where id = ${id}
+  `;
+}
+
+export async function enqueuePartnerHandoff(order) {
+  if (!order?.partner_id) return null;
+  const sql = getSql();
+  const [row] = await sql`
+    insert into public.partner_order_handoffs
+      (order_id, partner_id, payload)
+    values (
+      ${order.id}, ${order.partner_id},
+      ${sql.json({
+        order_public_id: order.public_id,
+        pickup_number: order.pickup_number,
+        customer_name: order.customer_name,
+        email: order.email,
+        pickup_window_start: order.pickup_window_start,
+        pickup_window_end: order.pickup_window_end,
+        preorder_deadline: order.preorder_deadline,
+        preorder_delivery_date: order.preorder_delivery_date,
+        items: order.items,
+      })}
+    )
+    on conflict (order_id) do update set updated_at = now()
+    returning *
+  `;
+  return normalizeRow(row);
+}
+
+export async function upsertPartner({ slug, name, sourceUrl }) {
+  const [row] = await getSql()`
+    insert into public.partners (slug, name, source_url)
+    values (${slug}, ${name}, ${sourceUrl})
+    on conflict (slug) do update set
+      name = excluded.name,
+      source_url = excluded.source_url,
+      active = true
+    returning *
+  `;
+  return normalizeRow(row);
+}
+
+export async function createPartnerMenuImportRun({ partnerId, sourceUrl }) {
+  const [row] = await getSql()`
+    insert into public.partner_menu_import_runs (partner_id, source_url)
+    values (${partnerId}, ${sourceUrl})
+    returning *
+  `;
+  return normalizeRow(row);
+}
+
+export async function stagePartnerMenuImport(runId, { sourceSha256, candidates }) {
+  const sql = getSql();
+  return sql.begin(async tx => {
+    for (const candidate of candidates) {
+      await tx`
+        insert into public.partner_menu_import_candidates (
+          import_run_id, external_source_id, name, description,
+          price_cents, image_url, source_url, source_payload
+        ) values (
+          ${runId}, ${candidate.externalSourceId}, ${candidate.name},
+          ${candidate.description || null}, ${candidate.priceCents},
+          ${candidate.imageUrl || null}, ${candidate.sourceUrl || null},
+          ${tx.json(candidate.sourcePayload || {})}
+        )
+        on conflict (import_run_id, external_source_id) do nothing
+      `;
+    }
+    const [run] = await tx`
+      update public.partner_menu_import_runs set
+        status = 'staged', source_sha256 = ${sourceSha256},
+        candidate_count = ${candidates.length}, completed_at = now()
+      where id = ${runId}
+      returning *
+    `;
+    return normalizeRow(run);
+  });
+}
+
+export async function failPartnerMenuImport(runId, error) {
+  const [row] = await getSql()`
+    update public.partner_menu_import_runs set
+      status = 'failed', error_message = ${String(error).slice(0, 1000)}, completed_at = now()
+    where id = ${runId}
+    returning *
+  `;
+  return normalizeRow(row);
+}
+
+export async function listPartnerMenuImports(limit = 20) {
+  return normalizeRows(await getSql()`
+    select r.*, p.slug as partner_slug, p.name as partner_name
+    from public.partner_menu_import_runs r
+    join public.partners p on p.id = r.partner_id
+    order by r.started_at desc
+    limit ${Math.min(Math.max(Number(limit) || 20, 1), 100)}
+  `);
+}
+
+export async function getPartnerMenuImportCandidates(runId) {
+  return normalizeRows(await getSql()`
+    select * from public.partner_menu_import_candidates
+    where import_run_id = ${runId}
+    order by name
+  `);
+}
+
+export async function publishPartnerMenuImport(runId) {
+  const sql = getSql();
+  return sql.begin(async tx => {
+    const [run] = await tx`
+      select * from public.partner_menu_import_runs where id = ${runId} for update
+    `;
+    if (!run) return { ok: false, code: 'not_found', message: 'Import run not found' };
+    if (run.status === 'published') {
+      return { ok: true, replayed: true, run: normalizeRow(run) };
+    }
+    if (run.status !== 'staged') {
+      return { ok: false, code: 'not_staged', message: `Import cannot be published from ${run.status}` };
+    }
+    const candidates = await tx`
+      select * from public.partner_menu_import_candidates
+      where import_run_id = ${runId}
+      order by created_at
+    `;
+    if (candidates.length === 0) {
+      return { ok: false, code: 'empty', message: 'Import has no menu candidates' };
+    }
+    if (candidates.length > 6) {
+      return { ok: false, code: 'too_many_meals', message: 'A weekly partner menu can publish at most six meals' };
+    }
+    const [week] = await tx`select date_trunc('week', now())::date as menu_week`;
+    await tx`
+      update public.menu_items set available = false
+      where channel = 'partner_meal' and partner_id = ${run.partner_id}
+    `;
+    for (const [sortOrder, candidate] of candidates.entries()) {
+      const sourceMenuDate = candidate.source_payload?.menuDate;
+      const possibleAllergens = Array.isArray(candidate.source_payload?.possibleAllergens)
+        ? candidate.source_payload.possibleAllergens
+        : [];
+      const menuDate = /^\d{4}-\d{2}-\d{2}$/.test(sourceMenuDate || '')
+        ? sourceMenuDate
+        : week.menu_week;
+      const [item] = await tx`
+        insert into public.menu_items (
+          name, description, price_cents, image_url, available, sort_order,
+          channel, partner_id, external_source_id, menu_week, source_url,
+          possible_allergens
+        ) values (
+          ${candidate.name}, ${candidate.description}, ${candidate.price_cents},
+          ${candidate.image_url}, true, ${sortOrder}, 'partner_meal', ${run.partner_id},
+          ${candidate.external_source_id}, ${menuDate}, ${candidate.source_url},
+          array(select jsonb_array_elements_text(${tx.json(possibleAllergens)}::jsonb))
+        )
+        on conflict (partner_id, external_source_id, menu_week)
+          where channel = 'partner_meal'
+        do update set
+          name = excluded.name,
+          description = excluded.description,
+          price_cents = excluded.price_cents,
+          image_url = excluded.image_url,
+          source_url = excluded.source_url,
+          possible_allergens = excluded.possible_allergens,
+          sort_order = excluded.sort_order,
+          available = true
+        returning id
+      `;
+      await tx`
+        update public.partner_menu_import_candidates
+        set published_menu_item_id = ${item.id}
+        where id = ${candidate.id}
+      `;
+    }
+    const [published] = await tx`
+      update public.partner_menu_import_runs set
+        status = 'published', published_at = now()
+      where id = ${runId}
+      returning *
+    `;
+    return { ok: true, replayed: false, run: normalizeRow(published), itemCount: candidates.length };
+  });
+}
+
+export async function cancelOrder(id, { reason = null, source = 'customer', actorSubject = null } = {}) {
+  const sql = getSql();
+  return sql.begin(async tx => {
+    const [current] = await tx`select * from public.orders where id = ${id} for update`;
     if (!current) return { ok: false, code: 'not_found', message: 'Order not found' };
-    const expectedNext = LEGAL_STATUS_TRANSITIONS[current.status];
-    if (expectedNext !== status) {
+    if (['cancelled', 'completed'].includes(current.status)) {
+      return {
+        ok: false,
+        code: 'final_state',
+        message: `Order is already ${current.status}`,
+        order: await loadOrderByInternalId(id, tx),
+      };
+    }
+    if (['paid', 'authorized'].includes(current.payment_status)
+      && current.payment_method !== LEGACY_CASH_PAYMENT_METHOD) {
+      return {
+        ok: false,
+        code: 'refund_required',
+        message: 'A confirmed provider refund is required before cancellation',
+        order: await loadOrderByInternalId(id, tx),
+      };
+    }
+    if (source === 'customer' && current.status !== 'pending') {
+      return {
+        ok: false,
+        code: 'too_late',
+        message: 'This order is already being prepared. Please come to the counter for help.',
+        order: await loadOrderByInternalId(id, tx),
+      };
+    }
+    if (!['customer', 'staff'].includes(source)) {
+      return { ok: false, code: 'invalid_actor', message: 'Invalid cancellation actor' };
+    }
+    const trimmedReason = typeof reason === 'string' ? reason.trim().slice(0, 500) : null;
+    await tx`
+      update public.orders set
+        status = 'cancelled', cancellation_reason = ${trimmedReason || null}, cancelled_by = ${source}
+      where id = ${id}
+    `;
+    await tx`
+      insert into public.order_lifecycle_events
+        (order_id, from_status, to_status, actor_type, actor_subject, metadata)
+      values (
+        ${id}, ${current.status}, 'cancelled', ${source}, ${actorSubject},
+        ${tx.json({ reason: trimmedReason || null })}
+      )
+    `;
+    return { ok: true, order: await loadOrderByInternalId(id, tx) };
+  });
+}
+
+export async function transitionOrderStatus(id, status, { actorType = 'staff', actorSubject = null } = {}) {
+  const sql = getSql();
+  return sql.begin(async tx => {
+    const [current] = await tx`select * from public.orders where id = ${id} for update`;
+    if (!current) return { ok: false, code: 'not_found', message: 'Order not found' };
+    const expected = LEGAL_STATUS_TRANSITIONS[current.status];
+    if (expected !== status) {
       return {
         ok: false,
         code: current.status === status ? 'already_in_state' : 'invalid_transition',
         message: current.status === status
           ? `Order is already ${status}`
           : `Cannot move order from ${current.status} to ${status}`,
-        order: loadOrderByInternalId(id),
+        order: await loadOrderByInternalId(id, tx),
       };
     }
     if (!isPaymentFulfillmentEligible(current)) {
@@ -944,156 +938,123 @@ export function transitionOrderStatus(id, status, { actorType = 'staff', actorSu
         ok: false,
         code: 'payment_required',
         message: 'Payment must be authorized before fulfillment can begin',
-        order: loadOrderByInternalId(id),
+        order: await loadOrderByInternalId(id, tx),
       };
     }
-    db.prepare(
-      'UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-    ).run(status, id);
-    insertLifecycleEvent({
-      orderId: id,
-      fromStatus: current.status,
-      toStatus: status,
-      actorType,
-      actorSubject,
-    });
-    return { ok: true, order: loadOrderByInternalId(id) };
+    await tx`update public.orders set status = ${status} where id = ${id}`;
+    await tx`
+      insert into public.order_lifecycle_events
+        (order_id, from_status, to_status, actor_type, actor_subject)
+      values (${id}, ${current.status}, ${status}, ${actorType}, ${actorSubject})
+    `;
+    return { ok: true, order: await loadOrderByInternalId(id, tx) };
   });
-  return transition();
 }
 
-export function getOrderHistory({ page = 1, limit = 20, status = null, startDate = null, endDate = null, search = null } = {}) {
-  const offset = (page - 1) * limit;
-  let whereConditions = [];
-  let params = [];
-
-  if (status && status !== 'all') {
-    whereConditions.push('status = ?');
-    params.push(status);
-  }
-
-  if (startDate) {
-    whereConditions.push('date(created_at) >= date(?)');
-    params.push(startDate);
-  }
-
-  if (endDate) {
-    whereConditions.push('date(created_at) <= date(?)');
-    params.push(endDate);
-  }
-
-  if (search) {
-    whereConditions.push('(customer_name LIKE ? OR pickup_number LIKE ? OR email LIKE ?)');
-    const searchPattern = `%${search}%`;
-    params.push(searchPattern, searchPattern, searchPattern);
-  }
-
-  const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
-
-  // Get total count
-  const countResult = db.prepare(`SELECT COUNT(*) as total FROM orders ${whereClause}`).get(...params);
-  const total = countResult.total;
-
-  // Get orders
-  const orders = db.prepare(`
-    SELECT * FROM orders
-    ${whereClause}
-    ORDER BY created_at DESC
-    LIMIT ? OFFSET ?
-  `).all(...params, limit, offset);
-
-  // Get items for each order
-  const getItems = db.prepare(`
-    SELECT oi.*,
-      (SELECT GROUP_CONCAT(oim.modifier_name || CASE WHEN oim.price_adjustment > 0 THEN ' (+$' || printf('%.2f', oim.price_adjustment) || ')' ELSE '' END, ', ')
-       FROM order_item_modifiers oim WHERE oim.order_item_id = oi.id) as modifiers
-    FROM order_items oi
-    WHERE oi.order_id = ?
+export async function getOrdersAwaitingPickupReminder(minutesOld = 10) {
+  return normalizeRows(await getSql()`
+    select id from public.orders
+    where status = 'ready' and nullif(email, '') is not null
+      and pickup_reminder_sent = false
+      and (payment_status in ('authorized', 'paid')
+        or (payment_status = 'unpaid' and payment_method = 'cash'))
+      and updated_at <= now() - (${minutesOld} * interval '1 minute')
+    order by updated_at
   `);
+}
 
-  for (const order of orders) {
-    order.items = getItems.all(order.id);
-  }
+export async function claimPickupReminder(id) {
+  const [row] = await getSql()`
+    update public.orders set pickup_reminder_sent = true
+    where id = ${id} and status = 'ready' and pickup_reminder_sent = false
+    returning id
+  `;
+  return Boolean(row);
+}
 
+export async function markPickupReminderSent(id, sent = true) {
+  return getSql()`update public.orders set pickup_reminder_sent = ${Boolean(sent)} where id = ${id}`;
+}
+
+export async function getOrderHistory({ page = 1, limit = 20, status = null, startDate = null, endDate = null, search = null } = {}) {
+  const sql = getSql();
+  const safePage = Math.max(Number(page) || 1, 1);
+  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  const offset = (safePage - 1) * safeLimit;
+  const normalizedStatus = status && status !== 'all' ? status : null;
+  const normalizedSearch = search ? `%${search}%` : null;
+  const [count] = await sql`
+    select count(*)::integer as total from public.orders
+    where (${normalizedStatus}::text is null or status::text = ${normalizedStatus})
+      and (${startDate}::date is null or created_at::date >= ${startDate}::date)
+      and (${endDate}::date is null or created_at::date <= ${endDate}::date)
+      and (${normalizedSearch}::text is null or customer_name ilike ${normalizedSearch}
+        or pickup_number::text ilike ${normalizedSearch} or email ilike ${normalizedSearch})
+  `;
+  const rows = await sql`
+    select * from public.orders
+    where (${normalizedStatus}::text is null or status::text = ${normalizedStatus})
+      and (${startDate}::date is null or created_at::date >= ${startDate}::date)
+      and (${endDate}::date is null or created_at::date <= ${endDate}::date)
+      and (${normalizedSearch}::text is null or customer_name ilike ${normalizedSearch}
+        or pickup_number::text ilike ${normalizedSearch} or email ilike ${normalizedSearch})
+    order by created_at desc limit ${safeLimit} offset ${offset}
+  `;
   return {
-    orders,
+    orders: await hydrateOrders(sql, rows),
     pagination: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
+      page: safePage,
+      limit: safeLimit,
+      total: count.total,
+      totalPages: Math.ceil(count.total / safeLimit),
     },
   };
 }
 
-export function getOrderStats(startDate = null, endDate = null) {
-  let whereConditions = [];
-  let params = [];
-
-  if (startDate) {
-    whereConditions.push('date(created_at) >= date(?)');
-    params.push(startDate);
-  }
-
-  if (endDate) {
-    whereConditions.push('date(created_at) <= date(?)');
-    params.push(endDate);
-  }
-
-  const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
-
-  const stats = db.prepare(`
-    SELECT
-      COUNT(*) as total_orders,
-      COALESCE(SUM(CASE WHEN status != 'cancelled' THEN total ELSE 0 END), 0) as total_revenue,
-      COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_orders,
-      COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled_orders,
-      COUNT(CASE WHEN status IN ('pending', 'preparing', 'ready') THEN 1 END) as active_orders
-    FROM orders ${whereClause}
-  `).get(...params);
-
-  return stats;
+export async function getOrderStats(startDate = null, endDate = null) {
+  const [row] = await getSql()`
+    select
+      count(*)::integer as total_orders,
+      coalesce(sum(total) filter (where status != 'cancelled'), 0) as total_revenue,
+      count(*) filter (where status = 'completed')::integer as completed_orders,
+      count(*) filter (where status = 'cancelled')::integer as cancelled_orders,
+      count(*) filter (where status in ('pending', 'preparing', 'ready'))::integer as active_orders
+    from public.orders
+    where (${startDate}::date is null or created_at::date >= ${startDate}::date)
+      and (${endDate}::date is null or created_at::date <= ${endDate}::date)
+  `;
+  return normalizeRow(row);
 }
 
-// ============ Stats ============
-export function getTodayOrderCount() {
-  const result = db.prepare(`
-    SELECT COUNT(*) as count FROM orders
-    WHERE date(created_at) = date('now')
-  `).get();
-  return result.count;
+export async function getTodayOrderCount() {
+  const [row] = await getSql()`
+    select count(*)::integer as count from public.orders where created_at::date = current_date
+  `;
+  return row.count;
 }
 
-export function getTodayRevenue() {
-  const result = db.prepare(`
-    SELECT COALESCE(SUM(total), 0) as total FROM orders
-    WHERE date(created_at) = date('now') AND status != 'cancelled'
-  `).get();
-  return result.total;
+export async function getTodayRevenue() {
+  const [row] = await getSql()`
+    select coalesce(sum(total), 0) as total from public.orders
+    where created_at::date = current_date and status != 'cancelled'
+  `;
+  return Number(row.total);
 }
 
 // ============ Settings ============
-export function getSetting(key) {
-  const result = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-  return result ? result.value : null;
+export async function getSetting(key) {
+  const [row] = await getSql()`select value from public.settings where key = ${key}`;
+  return row?.value ?? null;
 }
 
-export function setSetting(key, value) {
-  return db.prepare(`
-    INSERT INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
-  `).run(key, value, value);
+export async function setSetting(key, value) {
+  return getSql()`
+    insert into public.settings (key, value) values (${key}, ${value})
+    on conflict (key) do update set value = excluded.value
+  `;
 }
 
-export function getAllSettings() {
-  const rows = db.prepare('SELECT key, value FROM settings').all();
-  return rows.reduce((acc, row) => {
-    acc[row.key] = row.value;
-    return acc;
-  }, {});
+export async function getAllSettings() {
+  const rows = await getSql()`select key, value from public.settings order by key`;
+  return Object.fromEntries(rows.map(row => [row.key, row.value]));
 }
-
-// Seed the database on first run
-seedDatabase();
-
-export default db;

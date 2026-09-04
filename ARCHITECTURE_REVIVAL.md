@@ -1,4 +1,9 @@
-# Revival core architecture
+# Revival core architecture (historical baseline)
+
+> Preserved for the saved post-migration implementation/security plan. The
+> active deployment architecture is now documented in
+> `MIGRATION_VERCEL_SUPABASE.md`; references below to SQLite, Fly, custom JWTs,
+> and Socket.IO describe the pre-migration baseline.
 
 This branch keeps the existing Vite + Express + SQLite/Fly deployment shape
 while establishing a boundary that can move to Cloudflare and a managed

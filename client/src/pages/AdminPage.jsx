@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { createElement, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Plus,
@@ -19,13 +19,8 @@ import {
   FolderOpen,
   Package,
   Sliders,
-  Lock,
   LogOut,
   Database,
-  Download,
-  Upload,
-  Clock,
-  HardDrive,
   Megaphone,
   Receipt,
   Calendar,
@@ -35,20 +30,32 @@ import {
   FileText,
   User,
   ImageIcon,
+  LayoutDashboard,
 } from 'lucide-react';
 import { adminAPI, isAuthenticated as checkAuth } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
-import PinEntry from '../components/PinEntry';
+import StaffSignIn from '../components/StaffSignIn';
 
 export default function AdminPage() {
   const [authState, setAuthState] = useState('checking'); // 'checking' | 'authenticated' | 'unauthenticated'
-  const [activeTab, setActiveTab] = useState('items');
+  const [activeTab, setActiveTab] = useState('overview');
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [modifierGroups, setModifierGroups] = useState([]);
   const [stats, setStats] = useState({ orders: 0, revenue: 0 });
   const [settings, setSettings] = useState({ tax_rate: '0.0825' });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
+  const adminTabs = [
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'items', label: 'Menu Items', icon: Package },
+    { id: 'partner', label: 'Partner Menu', icon: Calendar },
+    { id: 'categories', label: 'Categories', icon: FolderOpen },
+    { id: 'modifiers', label: 'Modifiers', icon: Sliders },
+    { id: 'orders', label: 'Orders', icon: Receipt },
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ];
 
   // Verify authentication on mount
   useEffect(() => {
@@ -56,14 +63,15 @@ export default function AdminPage() {
   }, []);
 
   async function verifyAuth() {
-    if (!checkAuth()) {
+    if (!await checkAuth()) {
       setAuthState('unauthenticated');
       return;
     }
 
     try {
       // Verify token is still valid with server
-      await adminAPI.verifyToken();
+      const result = await adminAPI.verifyToken();
+      if (result.auth?.role !== 'admin') throw new Error('Administrator access is required');
       setAuthState('authenticated');
     } catch (err) {
       // Token invalid or expired
@@ -78,8 +86,8 @@ export default function AdminPage() {
     }
   }, [authState]);
 
-  function handleLogout() {
-    adminAPI.logout();
+  async function handleLogout() {
+    await adminAPI.logout();
     setAuthState('unauthenticated');
   }
 
@@ -96,12 +104,13 @@ export default function AdminPage() {
   }
 
   if (authState === 'unauthenticated') {
-    return <PinEntry onSuccess={handleAuthSuccess} title="Admin Access" />;
+    return <StaffSignIn onSuccess={handleAuthSuccess} title="Admin Access" />;
   }
 
   async function loadData() {
     try {
       setLoading(true);
+      setLoadError(null);
       const [items, cats, groups, statsData, settingsData] = await Promise.all([
         adminAPI.getItems(),
         adminAPI.getCategories(),
@@ -116,6 +125,7 @@ export default function AdminPage() {
       setSettings(settingsData || { tax_rate: '0.0825' });
     } catch (err) {
       console.error('Failed to load data:', err);
+      setLoadError(err.message || 'The dashboard could not load its latest data.');
     } finally {
       setLoading(false);
     }
@@ -159,101 +169,62 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mt-4 sm:mt-6">
-            <div className="bg-white/10 rounded-xl p-4">
-              <div className="flex items-center gap-3">
-                <ShoppingBag className="w-8 h-8 text-white/70" />
-                <div>
-                  <p className="text-white/70 text-sm">Today's Orders</p>
-                  <p className="text-2xl font-bold">{stats.orders}</p>
-                </div>
-              </div>
-            </div>
-            <div className="bg-white/10 rounded-xl p-4">
-              <div className="flex items-center gap-3">
-                <DollarSign className="w-8 h-8 text-white/70" />
-                <div>
-                  <p className="text-white/70 text-sm">Today's Revenue</p>
-                  <p className="text-2xl font-bold">{formatPriceFromDollars(stats.revenue)}</p>
-                </div>
-              </div>
-            </div>
-            <div className="bg-white/10 rounded-xl p-4">
-              <div className="flex items-center gap-3">
-                <Coffee className="w-8 h-8 text-white/70" />
-                <div>
-                  <p className="text-white/70 text-sm">Menu Items</p>
-                  <p className="text-2xl font-bold">{menuItems.length}</p>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Tabs */}
-        <div className="max-w-6xl mx-auto px-2 sm:px-4">
-          <div className="flex gap-1 overflow-x-auto -mx-2 px-2 sm:mx-0 sm:px-0">
-            <button
-              onClick={() => setActiveTab('items')}
-              className={`px-4 sm:px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap text-sm sm:text-base ${
-                activeTab === 'items'
-                  ? 'bg-gray-50 text-muze-dark'
-                  : 'text-white/70 hover:text-white'
-              }`}
+        <div className="max-w-6xl mx-auto px-4">
+          <div className="py-3 sm:hidden">
+            <label htmlFor="admin-section" className="sr-only">Dashboard section</label>
+            <select
+              id="admin-section"
+              value={activeTab}
+              onChange={(event) => setActiveTab(event.target.value)}
+              className="h-11 w-full rounded-xl border border-white/20 bg-white/10 px-3 text-sm font-semibold text-white focus:border-muze-gold focus:outline-none focus:ring-2 focus:ring-muze-gold"
             >
-              <Package className="w-4 h-4" />
-              Menu Items
-            </button>
-            <button
-              onClick={() => setActiveTab('categories')}
-              className={`px-4 sm:px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap text-sm sm:text-base ${
-                activeTab === 'categories'
-                  ? 'bg-gray-50 text-muze-dark'
-                  : 'text-white/70 hover:text-white'
-              }`}
-            >
-              <FolderOpen className="w-4 h-4" />
-              Categories
-            </button>
-            <button
-              onClick={() => setActiveTab('modifiers')}
-              className={`px-4 sm:px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap text-sm sm:text-base ${
-                activeTab === 'modifiers'
-                  ? 'bg-gray-50 text-muze-dark'
-                  : 'text-white/70 hover:text-white'
-              }`}
-            >
-              <Sliders className="w-4 h-4" />
-              Modifiers
-            </button>
-            <button
-              onClick={() => setActiveTab('orders')}
-              className={`px-4 sm:px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap text-sm sm:text-base ${
-                activeTab === 'orders'
-                  ? 'bg-gray-50 text-muze-dark'
-                  : 'text-white/70 hover:text-white'
-              }`}
-            >
-              <Receipt className="w-4 h-4" />
-              Orders
-            </button>
-            <button
-              onClick={() => setActiveTab('settings')}
-              className={`px-4 sm:px-6 py-3 rounded-t-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap text-sm sm:text-base ${
-                activeTab === 'settings'
-                  ? 'bg-gray-50 text-muze-dark'
-                  : 'text-white/70 hover:text-white'
-              }`}
-            >
-              <Settings className="w-4 h-4" />
-              Settings
-            </button>
+              {adminTabs.map(tab => <option key={tab.id} value={tab.id} className="text-muze-dark">{tab.label}</option>)}
+            </select>
+          </div>
+          <div className="hidden flex-wrap gap-1 sm:flex">
+            {adminTabs.map(tab => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 rounded-t-lg px-4 py-3 text-sm font-medium transition-colors ${
+                    activeTab === tab.id
+                      ? 'bg-gray-50 text-muze-dark'
+                      : 'text-white/70 hover:text-white'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-3 sm:px-4 py-5 sm:py-8">
+        {loadError && (
+          <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <span>{loadError}</span>
+            <button onClick={loadData} className="font-semibold underline underline-offset-2">Retry</button>
+          </div>
+        )}
+        {activeTab === 'overview' && (
+          <OverviewSection
+            items={menuItems}
+            categories={categories}
+            modifierGroups={modifierGroups}
+            stats={stats}
+            settings={settings}
+            loading={loading}
+            onNavigate={setActiveTab}
+            onUpdate={loadData}
+          />
+        )}
         {activeTab === 'items' && (
           <ItemsSection
             items={menuItems}
@@ -263,6 +234,7 @@ export default function AdminPage() {
             loading={loading}
           />
         )}
+        {activeTab === 'partner' && <PartnerMenuSection />}
         {activeTab === 'categories' && (
           <CategoriesSection
             categories={categories}
@@ -284,11 +256,182 @@ export default function AdminPage() {
         )}
         {activeTab === 'settings' && (
           <SettingsSection
+            key={`${settings.tax_rate}:${settings.announcement_text}:${settings.announcement_enabled}`}
             settings={settings}
             onUpdate={loadData}
           />
         )}
       </main>
+    </div>
+  );
+}
+
+// ============ Overview Section ============
+function OverviewSection({
+  items,
+  categories,
+  modifierGroups,
+  stats,
+  settings,
+  loading,
+  onNavigate,
+  onUpdate,
+}) {
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [statusError, setStatusError] = useState(null);
+  const kitchenOpen = settings.kitchen_open !== 'false';
+  const cafeItems = items.filter(item => item.channel !== 'partner_meal');
+  const partnerItems = items.filter(item => item.channel === 'partner_meal');
+  const unavailableItems = cafeItems.filter(item => !item.available);
+  const uncategorizedItems = cafeItems.filter(item => !item.category_id);
+  const missingImages = cafeItems.filter(item => !item.image_url);
+
+  async function toggleKitchenStatus() {
+    setSavingStatus(true);
+    setStatusError(null);
+    try {
+      await adminAPI.updateSetting('kitchen_open', String(!kitchenOpen));
+      await onUpdate();
+    } catch (err) {
+      setStatusError(err.message || 'Could not update café status.');
+    } finally {
+      setSavingStatus(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <RefreshCw className="h-8 w-8 animate-spin text-muze-gold" />
+      </div>
+    );
+  }
+
+  const healthItems = [
+    { label: 'Unavailable items', value: unavailableItems.length },
+    { label: 'Uncategorized items', value: uncategorizedItems.length },
+    { label: 'Missing images', value: missingImages.length },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.16em] text-muze-brown">Daily operations</p>
+          <h2 className="mt-1 text-2xl font-bold text-gray-950">Your café at a glance</h2>
+          <p className="mt-1 text-sm text-gray-600">Manage availability, announcements, menus, and incoming orders.</p>
+        </div>
+        <button onClick={onUpdate} className="btn btn-secondary flex items-center justify-center gap-2 self-start sm:self-auto">
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <OverviewMetric icon={ShoppingBag} label="Today's orders" value={stats.orders || 0} />
+        <OverviewMetric icon={DollarSign} label="Today's revenue" value={formatPriceFromDollars(stats.revenue || 0)} />
+        <OverviewMetric icon={Coffee} label="Café items" value={cafeItems.length} />
+        <OverviewMetric icon={Calendar} label="Partner meals" value={partnerItems.filter(item => item.available).length} />
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-3">
+        <section className="card p-5 lg:col-span-2">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-gray-500">Café ordering</p>
+              <div className="mt-2 flex items-center gap-2">
+                <span className={`h-2.5 w-2.5 rounded-full ${kitchenOpen ? 'bg-green-500' : 'bg-red-500'}`} />
+                <h3 className="text-xl font-bold text-gray-950">
+                  {kitchenOpen ? 'Accepting orders' : 'Ordering paused'}
+                </h3>
+              </div>
+              <p className="mt-2 text-sm text-gray-600">
+                {kitchenOpen
+                  ? 'Customers can add café items and continue to checkout.'
+                  : settings.kitchen_closed_message || 'Customers can browse, but they cannot place a new order.'}
+              </p>
+            </div>
+            <button
+              onClick={toggleKitchenStatus}
+              disabled={savingStatus}
+              className={`btn flex flex-shrink-0 items-center gap-2 ${kitchenOpen ? 'btn-secondary' : 'btn-primary'}`}
+            >
+              {savingStatus && <RefreshCw className="h-4 w-4 animate-spin" />}
+              {kitchenOpen ? 'Pause' : 'Open café'}
+            </button>
+          </div>
+          {statusError && <p className="mt-3 text-sm text-red-600">{statusError}</p>}
+
+          <div className="mt-5 grid gap-3 border-t pt-5 sm:grid-cols-3">
+            {healthItems.map(item => (
+              <button
+                key={item.label}
+                onClick={() => onNavigate('items')}
+                className="rounded-xl bg-gray-50 p-3 text-left transition-colors hover:bg-gray-100"
+              >
+                <p className={`text-2xl font-bold ${item.value ? 'text-amber-700' : 'text-green-700'}`}>{item.value}</p>
+                <p className="mt-0.5 text-xs font-medium text-gray-600">{item.label}</p>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="card p-5">
+          <div className="flex items-center gap-2 text-gray-950">
+            <Megaphone className="h-5 w-5 text-muze-brown" />
+            <h3 className="font-bold">Announcement</h3>
+          </div>
+          <div className={`mt-4 rounded-xl border p-4 ${settings.announcement_enabled === 'true' ? 'border-muze-gold/50 bg-muze-gold/15' : 'border-gray-200 bg-gray-50'}`}>
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+              {settings.announcement_enabled === 'true' ? 'Visible now' : 'Hidden'}
+            </p>
+            <p className="mt-2 text-sm font-medium leading-relaxed text-gray-800">
+              {settings.announcement_text || 'No announcement has been written.'}
+            </p>
+          </div>
+          <button onClick={() => onNavigate('settings')} className="mt-4 text-sm font-semibold text-muze-brown hover:underline">
+            Edit announcement →
+          </button>
+        </section>
+      </div>
+
+      <div className="grid gap-5 md:grid-cols-2">
+        <section className="card p-5">
+          <h3 className="font-bold text-gray-950">Catalog structure</h3>
+          <dl className="mt-4 grid grid-cols-3 gap-3">
+            <div><dt className="text-xs text-gray-500">Categories</dt><dd className="mt-1 text-xl font-bold">{categories.length}</dd></div>
+            <div><dt className="text-xs text-gray-500">Items live</dt><dd className="mt-1 text-xl font-bold">{cafeItems.length - unavailableItems.length}</dd></div>
+            <div><dt className="text-xs text-gray-500">Modifier sets</dt><dd className="mt-1 text-xl font-bold">{modifierGroups.length}</dd></div>
+          </dl>
+          <button onClick={() => onNavigate('items')} className="mt-5 text-sm font-semibold text-muze-brown hover:underline">Manage café menu →</button>
+        </section>
+
+        <section className="card p-5">
+          <h3 className="font-bold text-gray-950">Quick actions</h3>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button onClick={() => onNavigate('orders')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Review orders</button>
+            <button onClick={() => onNavigate('partner')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Partner menu</button>
+            <button onClick={() => onNavigate('categories')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Edit categories</button>
+            <Link to="/kitchen" className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Kitchen display</Link>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function OverviewMetric({ icon, label, value }) {
+  return (
+    <div className="card p-4 sm:p-5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-gray-500 sm:text-sm">{label}</p>
+          <p className="mt-1 truncate text-xl font-bold text-gray-950 sm:text-2xl">{value}</p>
+        </div>
+        <span className="hidden h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-muze-gold/15 text-muze-brown sm:flex">
+          {createElement(icon, { className: 'h-4 w-4' })}
+        </span>
+      </div>
     </div>
   );
 }
@@ -522,13 +665,8 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
     setForm(f => ({ ...f, image_url: null }));
   }
 
-  useEffect(() => {
-    if (item?.id) {
-      loadItemModifiers();
-    }
-  }, [item?.id]);
-
-  async function loadItemModifiers() {
+  const loadItemModifiers = useCallback(async () => {
+    if (!item?.id) return;
     setLoadingModifiers(true);
     try {
       const fullItem = await adminAPI.getItem(item.id);
@@ -543,7 +681,12 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
     } finally {
       setLoadingModifiers(false);
     }
-  }
+  }, [item]);
+
+  useEffect(() => {
+    const timer = setTimeout(loadItemModifiers, 0);
+    return () => clearTimeout(timer);
+  }, [loadItemModifiers]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -778,6 +921,208 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// ============ Partner Menu Section ============
+function PartnerMenuSection() {
+  const [imports, setImports] = useState([]);
+  const [selectedRun, setSelectedRun] = useState(null);
+  const [candidates, setCandidates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [message, setMessage] = useState(null);
+  const [error, setError] = useState(null);
+
+  const loadImports = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setImports(await adminAPI.getPartnerMenuImports() || []);
+    } catch (err) {
+      setError(err.message || 'Could not load partner menu history.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(loadImports, 0);
+    return () => clearTimeout(timer);
+  }, [loadImports]);
+
+  async function refreshMenu() {
+    setWorking(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await adminAPI.refreshPartnerMenu();
+      if (result.status === 'disabled') {
+        setMessage(result.reason || 'The partner source is not configured yet.');
+      } else {
+        setMessage(`Imported ${result.candidateCount || 0} menu candidates for review.`);
+        await loadImports();
+      }
+    } catch (err) {
+      setError(err.message || 'Partner menu refresh failed.');
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function reviewRun(run) {
+    setSelectedRun(run);
+    setCandidates([]);
+    setError(null);
+    try {
+      setCandidates(await adminAPI.getPartnerMenuCandidates(run.id) || []);
+    } catch (err) {
+      setError(err.message || 'Could not load the imported menu.');
+    }
+  }
+
+  async function publishRun(run) {
+    if (!confirm(`Publish ${run.candidate_count || 0} weekly pre-order meals to the customer menu?`)) return;
+    setWorking(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await adminAPI.publishPartnerMenuImport(run.id);
+      setMessage('Partner menu published successfully.');
+      setSelectedRun(null);
+      setCandidates([]);
+      await loadImports();
+    } catch (err) {
+      setError(err.message || 'Could not publish this partner menu.');
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  function formatImportDate(value) {
+    if (!value) return '—';
+    return new Date(value).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+
+  const statusStyle = {
+      staged: 'bg-amber-100 text-amber-800',
+    published: 'bg-green-100 text-green-800',
+    failed: 'bg-red-100 text-red-800',
+    running: 'bg-blue-100 text-blue-800',
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.16em] text-muze-brown">Weekly meal pre-orders</p>
+          <h2 className="mt-1 text-2xl font-bold text-gray-950">Partner menu imports</h2>
+          <p className="mt-1 max-w-2xl text-sm text-gray-600">
+            Pull Down to Earth Cuisine’s weekly menu, inspect the balanced six-meal $19 selection, then publish it to the customer menu.
+          </p>
+        </div>
+        <button onClick={refreshMenu} disabled={working} className="btn btn-primary flex items-center justify-center gap-2">
+          <RefreshCw className={`h-4 w-4 ${working ? 'animate-spin' : ''}`} />
+          Refresh source
+        </button>
+      </div>
+
+      {message && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">{message}</div>
+      )}
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>
+      )}
+
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <h3 className="font-semibold text-amber-950">Review before publishing</h3>
+        <p className="mt-1 text-sm text-amber-800">
+          Three eligible chicken/beef dishes and three vegetarian dishes are staged; fish, seafood, and pork are denied. The live menu changes only after an administrator publishes the import.
+        </p>
+      </div>
+
+      <section className="card overflow-hidden">
+        <div className="border-b border-gray-100 px-4 py-3 sm:px-5">
+          <h3 className="font-bold text-gray-950">Import history</h3>
+        </div>
+        {loading ? (
+          <div className="flex justify-center py-12"><RefreshCw className="h-6 w-6 animate-spin text-muze-gold" /></div>
+        ) : imports.length === 0 ? (
+          <div className="px-5 py-12 text-center">
+            <Calendar className="mx-auto h-10 w-10 text-gray-300" />
+            <h3 className="mt-3 font-semibold text-gray-800">No imports yet</h3>
+            <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
+              Once the partner URL and allowlisted host are configured, use Refresh source to create the first reviewable menu.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {imports.map(run => (
+              <div key={run.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold text-gray-950">{run.partner_name}</p>
+                    <span className={`rounded-full px-2 py-1 text-xs font-semibold capitalize ${statusStyle[run.status] || 'bg-gray-100 text-gray-700'}`}>
+                      {run.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {formatImportDate(run.started_at)} · {run.candidate_count || 0} candidates
+                  </p>
+                  {run.error_message && <p className="mt-1 text-sm text-red-600">{run.error_message}</p>}
+                </div>
+                <div className="flex gap-2">
+                  {['staged', 'published'].includes(run.status) && (
+                    <button onClick={() => reviewRun(run)} className="btn btn-secondary flex-1 sm:flex-none">Review</button>
+                  )}
+                  {run.status === 'staged' && (
+                    <button onClick={() => publishRun(run)} disabled={working} className="btn btn-primary flex-1 sm:flex-none">Publish</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {selectedRun && (
+        <section className="card overflow-hidden">
+          <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 sm:px-5">
+            <div>
+              <h3 className="font-bold text-gray-950">{selectedRun.partner_name} candidates</h3>
+              <p className="text-xs text-gray-500">Verify naming, pricing, and images before publishing.</p>
+            </div>
+            <button onClick={() => setSelectedRun(null)} className="flex h-9 w-9 items-center justify-center rounded-lg hover:bg-gray-100" aria-label="Close candidate review">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3">
+            {candidates.map(candidate => (
+              <article key={candidate.id} className="rounded-xl border border-gray-200 p-4">
+                <div className="flex gap-3">
+                  {candidate.image_url ? (
+                    <img src={candidate.image_url} alt="" className="h-14 w-14 flex-shrink-0 rounded-lg object-cover" />
+                  ) : (
+                    <span className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-lg bg-gray-100"><ImageIcon className="h-5 w-5 text-gray-400" /></span>
+                  )}
+                  <div className="min-w-0">
+                    <h4 className="font-semibold leading-tight text-gray-950">{candidate.name}</h4>
+                    <p className="mt-1 font-bold text-muze-brown">{formatPriceFromDollars((candidate.price_cents || 0) / 100)}</p>
+                  </div>
+                </div>
+                {candidate.description && <p className="mt-3 line-clamp-3 text-sm text-gray-600">{candidate.description}</p>}
+              </article>
+            ))}
+            {candidates.length === 0 && <p className="col-span-full py-6 text-center text-sm text-gray-500">No candidates were found for this import.</p>}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -1397,32 +1742,13 @@ function OrdersSection() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
 
   // Pagination
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ total: 0, totalPages: 1 });
 
-  useEffect(() => {
-    loadOrders();
-  }, [page, statusFilter, startDate, endDate]);
-
-  useEffect(() => {
-    loadStats();
-  }, [startDate, endDate]);
-
-  // Debounced search
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (page === 1) {
-        loadOrders();
-      } else {
-        setPage(1);
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     try {
       setLoading(true);
       const result = await adminAPI.getOrders({
@@ -1431,7 +1757,7 @@ function OrdersSection() {
         status: statusFilter !== 'all' ? statusFilter : null,
         startDate: startDate || null,
         endDate: endDate || null,
-        search: search || null,
+        search: debouncedSearch || null,
       });
       setOrders(result.orders || []);
       setPagination(result.pagination || { total: 0, totalPages: 1 });
@@ -1441,16 +1767,34 @@ function OrdersSection() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [debouncedSearch, endDate, page, startDate, statusFilter]);
 
-  async function loadStats() {
+  const loadStats = useCallback(async () => {
     try {
       const result = await adminAPI.getOrderStats(startDate || null, endDate || null);
       setStats(result);
     } catch (err) {
       console.error('Failed to load order stats:', err);
     }
-  }
+  }, [endDate, startDate]);
+
+  useEffect(() => {
+    const timer = setTimeout(loadOrders, 0);
+    return () => clearTimeout(timer);
+  }, [loadOrders]);
+
+  useEffect(() => {
+    const timer = setTimeout(loadStats, 0);
+    return () => clearTimeout(timer);
+  }, [loadStats]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   function formatDate(dateString) {
     return new Date(dateString).toLocaleString('en-US', {
@@ -1827,34 +2171,21 @@ function OrderDetailModal({ order, onClose }) {
 
 // ============ Settings Section ============
 function SettingsSection({ settings, onUpdate }) {
-  const [taxRate, setTaxRate] = useState('');
+  const [taxRate, setTaxRate] = useState(() => (
+    (parseFloat(settings.tax_rate || 0.0825) * 100).toFixed(2)
+  ));
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
 
   // Announcement state
-  const [announcementText, setAnnouncementText] = useState('');
-  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [announcementText, setAnnouncementText] = useState(settings.announcement_text || '');
+  const [announcementEnabled, setAnnouncementEnabled] = useState(
+    settings.announcement_enabled === 'true',
+  );
   const [savingAnnouncement, setSavingAnnouncement] = useState(false);
   const [announcementResult, setAnnouncementResult] = useState(null);
   const [announcementError, setAnnouncementError] = useState(null);
-
-  // PIN change state
-  const [currentPin, setCurrentPin] = useState('');
-  const [newPin, setNewPin] = useState('');
-  const [confirmPin, setConfirmPin] = useState('');
-  const [savingPin, setSavingPin] = useState(false);
-  const [pinResult, setPinResult] = useState(null);
-  const [pinError, setPinError] = useState(null);
-  const [showCurrentPin, setShowCurrentPin] = useState(false);
-  const [showNewPin, setShowNewPin] = useState(false);
-
-  useEffect(() => {
-    const rate = parseFloat(settings.tax_rate || 0.0825);
-    setTaxRate((rate * 100).toFixed(2));
-    setAnnouncementText(settings.announcement_text || '');
-    setAnnouncementEnabled(settings.announcement_enabled === 'true');
-  }, [settings.tax_rate, settings.announcement_text, settings.announcement_enabled]);
 
   const handleSaveAnnouncement = async () => {
     setSavingAnnouncement(true);
@@ -1894,48 +2225,6 @@ function SettingsSection({ settings, onUpdate }) {
       setError(err.message || 'Failed to save tax rate');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleChangePin = async (e) => {
-    e.preventDefault();
-    setPinError(null);
-    setPinResult(null);
-
-    // Validate inputs
-    if (!currentPin || currentPin.length < 4) {
-      setPinError('Please enter your current PIN');
-      return;
-    }
-    if (!newPin || newPin.length < 4) {
-      setPinError('New PIN must be at least 4 digits');
-      return;
-    }
-    if (newPin !== confirmPin) {
-      setPinError('New PINs do not match');
-      return;
-    }
-
-    setSavingPin(true);
-
-    try {
-      // Verify current PIN first
-      const verifyResult = await adminAPI.verifyPin(currentPin);
-      if (!verifyResult.success) {
-        throw new Error('Current PIN is incorrect');
-      }
-
-      // Update to new PIN
-      await adminAPI.updateSetting('admin_pin', newPin);
-      setPinResult('PIN changed successfully');
-      setCurrentPin('');
-      setNewPin('');
-      setConfirmPin('');
-    } catch (err) {
-      console.error('Failed to change PIN:', err);
-      setPinError(err.message || 'Failed to change PIN');
-    } finally {
-      setSavingPin(false);
     }
   };
 
@@ -2024,14 +2313,14 @@ function SettingsSection({ settings, onUpdate }) {
         )}
       </div>
 
-      {/* Tax Rate Setting */}
+      {/* Café Tax Rate Setting */}
       <div className="card p-6">
         <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
           <Percent className="w-6 h-6" />
-          Tax Rate
+          Café Tax Rate
         </h2>
         <p className="text-gray-600 text-sm mb-4">
-          Set the sales tax rate applied to all orders. Enter the percentage (e.g., 8.25 for 8.25%).
+          Set the sales tax rate applied to café orders. Partner-meal tax is tracked separately.
         </p>
 
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
@@ -2086,116 +2375,19 @@ function SettingsSection({ settings, onUpdate }) {
       </div>
 
       <div className="card p-6 bg-blue-50 border-blue-200">
-        <h3 className="font-semibold text-blue-900 mb-2">About Tax Calculation</h3>
+        <h3 className="font-semibold text-blue-900 mb-2">Partner-meal tax: 8.375%</h3>
         <p className="text-blue-800 text-sm">
-          The tax rate is applied to the subtotal of each order at checkout.
-          Changes will apply to all new orders immediately.
+          Partner meals use the Clark County rate for pickup at Muze’s Las Vegas location.
+          Café tax is added at checkout. Partner-meal tax is backed out of the flat listed price so the customer total does not increase.
         </p>
       </div>
 
-      {/* PIN Change Setting */}
       <div className="card p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-          <Lock className="w-6 h-6" />
-          Change Admin PIN
-        </h2>
-        <p className="text-gray-600 text-sm mb-4">
-          Update the PIN used for admin and kitchen access. The PIN must be at least 4 digits.
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Staff account security</h2>
+        <p className="text-gray-600 text-sm">
+          Staff credentials and password resets are managed through Supabase Authentication.
+          Access roles are stored in protected app metadata and cannot be changed from the browser.
         </p>
-
-        <form onSubmit={handleChangePin} className="space-y-4 max-w-sm">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Current PIN
-            </label>
-            <div className="relative">
-              <input
-                type={showCurrentPin ? 'text' : 'password'}
-                inputMode="numeric"
-                pattern="[0-9]*"
-                value={currentPin}
-                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                className="input pr-10"
-                placeholder="Enter current PIN"
-              />
-              <button
-                type="button"
-                onClick={() => setShowCurrentPin(!showCurrentPin)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              >
-                {showCurrentPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              New PIN
-            </label>
-            <div className="relative">
-              <input
-                type={showNewPin ? 'text' : 'password'}
-                inputMode="numeric"
-                pattern="[0-9]*"
-                value={newPin}
-                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                className="input pr-10"
-                placeholder="Enter new PIN"
-              />
-              <button
-                type="button"
-                onClick={() => setShowNewPin(!showNewPin)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              >
-                {showNewPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Confirm New PIN
-            </label>
-            <input
-              type={showNewPin ? 'text' : 'password'}
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={confirmPin}
-              onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              className="input"
-              placeholder="Confirm new PIN"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={savingPin}
-            className="btn btn-primary px-6 py-3 flex items-center gap-2"
-          >
-            {savingPin ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              'Change PIN'
-            )}
-          </button>
-        </form>
-
-        {pinResult && (
-          <div className="mt-4 p-3 bg-green-50 rounded-lg border border-green-200 flex items-center gap-2">
-            <Check className="w-5 h-5 text-green-500" />
-            <span className="text-green-800 text-sm">{pinResult}</span>
-          </div>
-        )}
-
-        {pinError && (
-          <div className="mt-4 p-3 bg-red-50 rounded-lg border border-red-200 flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-red-500" />
-            <span className="text-red-800 text-sm">{pinError}</span>
-          </div>
-        )}
       </div>
 
       {/* Database Backup Section */}
@@ -2206,310 +2398,17 @@ function SettingsSection({ settings, onUpdate }) {
 
 // ============ Backup Section ============
 function BackupSection() {
-  const [backups, setBackups] = useState([]);
-  const [backupInfo, setBackupInfo] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [restoring, setRestoring] = useState(null);
-  const [deleting, setDeleting] = useState(null);
-  const [cleaning, setCleaning] = useState(false);
-  const [message, setMessage] = useState(null);
-  const [error, setError] = useState(null);
-  const [cleanupDays, setCleanupDays] = useState(7);
-
-  useEffect(() => {
-    loadBackups();
-  }, []);
-
-  async function loadBackups() {
-    try {
-      setLoading(true);
-      const [backupsData, infoData] = await Promise.all([
-        adminAPI.getBackups(),
-        adminAPI.getBackupInfo(),
-      ]);
-      setBackups(backupsData?.backups || []);
-      setBackupInfo(infoData);
-    } catch (err) {
-      console.error('Failed to load backups:', err);
-      setError('Failed to load backups');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleCreateBackup() {
-    setCreating(true);
-    setError(null);
-    setMessage(null);
-
-    try {
-      const result = await adminAPI.createBackup();
-      setMessage(`Backup created: ${result.filename}`);
-      loadBackups();
-    } catch (err) {
-      console.error('Failed to create backup:', err);
-      setError(err.message || 'Failed to create backup');
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function handleRestoreBackup(filename) {
-    if (!confirm(`Restore database from backup "${filename}"?\n\nWARNING: This will replace the current database. A pre-restore backup will be created automatically.`)) {
-      return;
-    }
-
-    setRestoring(filename);
-    setError(null);
-    setMessage(null);
-
-    try {
-      await adminAPI.restoreBackup(filename);
-      setMessage(`Database restored from ${filename}. You may need to refresh the page.`);
-      loadBackups();
-    } catch (err) {
-      console.error('Failed to restore backup:', err);
-      setError(err.message || 'Failed to restore backup');
-    } finally {
-      setRestoring(null);
-    }
-  }
-
-  async function handleDeleteBackup(filename) {
-    if (!confirm(`Delete backup "${filename}"? This cannot be undone.`)) {
-      return;
-    }
-
-    setDeleting(filename);
-    setError(null);
-    setMessage(null);
-
-    try {
-      await adminAPI.deleteBackup(filename);
-      setMessage(`Backup deleted: ${filename}`);
-      loadBackups();
-    } catch (err) {
-      console.error('Failed to delete backup:', err);
-      setError(err.message || 'Failed to delete backup');
-    } finally {
-      setDeleting(null);
-    }
-  }
-
-  async function handleCleanupBackups() {
-    if (!confirm(`Delete all backups older than ${cleanupDays} days?`)) {
-      return;
-    }
-
-    setCleaning(true);
-    setError(null);
-    setMessage(null);
-
-    try {
-      const result = await adminAPI.cleanupBackups(cleanupDays);
-      setMessage(result.message || `Cleaned up old backups`);
-      loadBackups();
-    } catch (err) {
-      console.error('Failed to cleanup backups:', err);
-      setError(err.message || 'Failed to cleanup backups');
-    } finally {
-      setCleaning(false);
-    }
-  }
-
-  function formatDate(dateString) {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffHours < 1) return 'Just now';
-    if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
-    if (diffDays < 7) return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
-
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  }
-
   return (
     <div className="card p-6">
       <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
         <Database className="w-6 h-6" />
-        Database Backups
+        Managed database backups
       </h2>
-      <p className="text-gray-600 text-sm mb-4">
-        Create and manage database backups. Backups include all orders, menu items, categories, and settings.
+      <p className="text-gray-600 text-sm">
+        Supabase manages database backups outside this application. Configure retention and
+        point-in-time recovery in the Supabase dashboard, where restore access can be restricted
+        to project owners instead of every application administrator.
       </p>
-
-      {/* Action Buttons */}
-      <div className="flex flex-wrap gap-3 mb-6">
-        <button
-          onClick={handleCreateBackup}
-          disabled={creating}
-          className="btn btn-primary flex items-center gap-2"
-        >
-          {creating ? (
-            <>
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              Creating...
-            </>
-          ) : (
-            <>
-              <Download className="w-4 h-4" />
-              Create Backup
-            </>
-          )}
-        </button>
-
-        <div className="flex items-center gap-2">
-          <input
-            type="number"
-            min="1"
-            max="365"
-            value={cleanupDays}
-            onChange={(e) => setCleanupDays(parseInt(e.target.value) || 7)}
-            className="input w-20 py-2"
-          />
-          <button
-            onClick={handleCleanupBackups}
-            disabled={cleaning}
-            className="btn btn-secondary flex items-center gap-2"
-          >
-            {cleaning ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                Cleaning...
-              </>
-            ) : (
-              <>
-                <Trash2 className="w-4 h-4" />
-                Clean up older than {cleanupDays} days
-              </>
-            )}
-          </button>
-        </div>
-
-        <button
-          onClick={loadBackups}
-          disabled={loading}
-          className="btn btn-secondary flex items-center gap-2"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
-      </div>
-
-      {/* Storage Info */}
-      {backupInfo && (
-        <div className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg mb-4">
-          <HardDrive className="w-5 h-5 text-gray-500" />
-          <span className="text-sm text-gray-600">
-            <strong>{backupInfo.backupCount}</strong> backup{backupInfo.backupCount !== 1 ? 's' : ''} |
-            <strong className="ml-1">{backupInfo.totalSize}</strong> total
-          </span>
-        </div>
-      )}
-
-      {/* Messages */}
-      {message && (
-        <div className="mb-4 p-3 bg-green-50 rounded-lg border border-green-200 flex items-center gap-2">
-          <Check className="w-5 h-5 text-green-500" />
-          <span className="text-green-800 text-sm">{message}</span>
-        </div>
-      )}
-
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 rounded-lg border border-red-200 flex items-center gap-2">
-          <AlertCircle className="w-5 h-5 text-red-500" />
-          <span className="text-red-800 text-sm">{error}</span>
-        </div>
-      )}
-
-      {/* Backups List */}
-      {loading ? (
-        <div className="flex items-center justify-center py-8">
-          <RefreshCw className="w-6 h-6 animate-spin text-gray-400" />
-        </div>
-      ) : backups.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          <Database className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-          <p>No backups yet</p>
-          <p className="text-sm">Click "Create Backup" to create your first backup</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium text-gray-700 mb-2">Recent Backups</h3>
-          {backups.map((backup) => (
-            <div
-              key={backup.filename}
-              className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <Database className="w-5 h-5 text-gray-400" />
-                <div>
-                  <p className="font-medium text-gray-900 text-sm truncate max-w-xs" title={backup.filename}>
-                    {backup.filename}
-                  </p>
-                  <div className="flex items-center gap-3 text-xs text-gray-500">
-                    <span className="flex items-center gap-1">
-                      <HardDrive className="w-3 h-3" />
-                      {backup.size}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {formatDate(backup.created)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleRestoreBackup(backup.filename)}
-                  disabled={restoring === backup.filename}
-                  className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
-                  title="Restore this backup"
-                >
-                  {restoring === backup.filename ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Upload className="w-4 h-4" />
-                  )}
-                </button>
-                <button
-                  onClick={() => handleDeleteBackup(backup.filename)}
-                  disabled={deleting === backup.filename}
-                  className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
-                  title="Delete this backup"
-                >
-                  {deleting === backup.filename ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-4 h-4" />
-                  )}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Info Box */}
-      <div className="mt-6 p-4 bg-amber-50 rounded-lg border border-amber-200">
-        <h3 className="font-semibold text-amber-900 mb-2">Backup Information</h3>
-        <ul className="text-amber-800 text-sm space-y-1">
-          <li>Backups are stored locally on the server</li>
-          <li>Restoring a backup will replace all current data</li>
-          <li>A pre-restore backup is automatically created before restoring</li>
-          <li>For safety, download important backups to external storage</li>
-        </ul>
-      </div>
     </div>
   );
 }

@@ -1,161 +1,123 @@
-// In production, use relative URL since client is served from same origin
-// In development, use localhost:3001
-const API_BASE = import.meta.env.VITE_API_URL ||
-  (import.meta.env.PROD ? '/api' : 'http://localhost:3001/api');
+import { supabase } from '../lib/supabase';
 
-// ============ Auth Token Management ============
-const AUTH_TOKEN_KEY = 'muze_auth_token';
-const DEV_CUSTOMER_SUBJECT_KEY = 'muze_dev_customer_subject';
+const API_BASE = import.meta.env.VITE_API_URL
+  || (import.meta.env.PROD ? '/api' : 'http://localhost:3001/api');
 
-export function getAuthToken() {
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+async function session() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  return data.session;
 }
 
-export function setAuthToken(token) {
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
+async function requireSession() {
+  const current = await session();
+  if (!current?.access_token) throw new Error('Authentication required');
+  return current;
 }
 
-export function clearAuthToken() {
-  localStorage.removeItem(AUTH_TOKEN_KEY);
+async function ensureCustomerSession() {
+  const current = await session();
+  if (current?.access_token) return current;
+  const { data, error } = await supabase.auth.signInAnonymously();
+  if (error) throw new Error(error.message || 'Unable to start a customer session');
+  return data.session;
 }
 
-export function isAuthenticated() {
-  return !!getAuthToken();
+export async function getAuthToken() {
+  return (await session())?.access_token || null;
 }
 
-function getCustomerAuthHeaders() {
-  if (import.meta.env.VITE_CUSTOMER_AUTH_MODE !== 'dev-header') return {};
-  let subject = localStorage.getItem(DEV_CUSTOMER_SUBJECT_KEY);
-  if (!subject) {
-    subject = typeof globalThis.crypto?.randomUUID === 'function'
-      ? globalThis.crypto.randomUUID()
-      : `dev-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem(DEV_CUSTOMER_SUBJECT_KEY, subject);
-  }
-  return { 'X-Dev-Customer-Subject': subject };
+export async function isAuthenticated() {
+  return Boolean(await getAuthToken());
 }
-
-// ============ Request Helpers ============
 
 async function request(endpoint, options = {}) {
-  const url = `${API_BASE}${endpoint}`;
-
-  // Build config more explicitly to avoid issues
   const config = {
     method: options.method || 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers: { 'Content-Type': 'application/json', ...options.headers },
   };
-
-  // Handle body - stringify if it's an object
-  if (options.body) {
-    if (options.body instanceof FormData) {
-      config.body = options.body;
-      delete config.headers['Content-Type'];
-    } else if (typeof options.body === 'object') {
-      config.body = JSON.stringify(options.body);
-    } else {
-      config.body = options.body;
-    }
+  if (options.body instanceof FormData) {
+    config.body = options.body;
+    delete config.headers['Content-Type'];
+  } else if (options.body !== undefined) {
+    config.body = typeof options.body === 'object'
+      ? JSON.stringify(options.body)
+      : options.body;
   }
 
   let response;
   try {
-    response = await fetch(url, config);
-  } catch (networkError) {
-    console.error('Network error:', networkError);
+    response = await fetch(`${API_BASE}${endpoint}`, config);
+  } catch {
     throw new Error('Network error - please check your connection');
   }
-
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Request failed' }));
-    throw new Error(error.message || 'Request failed');
+    const payload = await response.json().catch(() => ({ message: 'Request failed' }));
+    const error = new Error(payload.message || 'Request failed');
+    error.status = response.status;
+    error.code = payload.code;
+    error.details = payload.errors;
+    throw error;
   }
-
+  if (response.status === 204) return null;
   const text = await response.text();
-  if (!text) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch (parseError) {
-    console.error('JSON parse error:', parseError, 'Response text:', text.substring(0, 200));
-    throw new Error('Invalid response from server');
-  }
+  return text ? JSON.parse(text) : null;
 }
 
-// Authenticated request - adds Bearer token header
-async function authRequest(endpoint, options = {}) {
-  const token = getAuthToken();
-
-  if (!token) {
-    throw new Error('Authentication required');
-  }
-
-  const authOptions = {
+async function withBearer(endpoint, options, authSession) {
+  return request(endpoint, {
     ...options,
     headers: {
-      ...options.headers,
-      'Authorization': `Bearer ${token}`,
+      ...options?.headers,
+      Authorization: `Bearer ${authSession.access_token}`,
     },
-  };
+  });
+}
 
+async function authRequest(endpoint, options = {}) {
   try {
-    return await request(endpoint, authOptions);
+    return await withBearer(endpoint, options, await requireSession());
   } catch (error) {
-    // If token is invalid/expired, clear it and throw specific error
-    if (error.message === 'Invalid or expired token' || error.message === 'Authentication required') {
-      clearAuthToken();
-      throw new Error('Session expired. Please log in again.');
+    if (error.status === 401) {
+      await supabase.auth.signOut({ scope: 'local' });
+      throw new Error('Session expired. Please sign in again.');
     }
     throw error;
   }
 }
 
-// ============ Menu endpoints (public) ============
+async function customerRequest(endpoint, options = {}) {
+  return withBearer(endpoint, options, await ensureCustomerSession());
+}
+
 export const menuAPI = {
-  getCategories: () => request('/menu/categories'),
-  getItems: () => request('/menu/items'),
-  getItemsByCategory: (categoryId) => request(`/menu/categories/${categoryId}/items`),
-  getItem: (id) => request(`/menu/items/${id}`),
-  getModifiers: (itemId) => request(`/menu/items/${itemId}/modifiers`),
+  getCategories: (channel = 'cafe') => request(`/menu/categories?channel=${encodeURIComponent(channel)}`),
+  getItems: (channel = 'cafe') => request(`/menu/items?channel=${encodeURIComponent(channel)}`),
+  getItemsByCategory: (categoryId, channel = 'cafe') => request(`/menu/categories/${categoryId}/items?channel=${encodeURIComponent(channel)}`),
+  getItem: id => request(`/menu/items/${id}`),
+  getModifiers: itemId => request(`/menu/items/${itemId}/modifiers`),
   getAllModifiers: () => request('/menu/modifiers'),
 };
 
-// ============ Order endpoints ============
 export const orderAPI = {
-  // Customer routes require an upstream-verified subject in production. The
-  // dev header is sent only when explicitly enabled in Vite env.
-  create: (orderData, idempotencyKey) => request('/orders', {
+  create: (orderData, idempotencyKey, paymentAttemptKey) => customerRequest('/orders', {
     method: 'POST',
     headers: {
-      ...getCustomerAuthHeaders(),
       'Idempotency-Key': idempotencyKey,
+      ...(paymentAttemptKey ? { 'Payment-Attempt-Key': paymentAttemptKey } : {}),
     },
     body: orderData,
   }),
-  get: (id) => request(`/orders/${id}`, {
-    headers: getCustomerAuthHeaders(),
-  }),
-
-  // Public - customer cancels their own order (server gates to pending status)
-  cancel: (id, reason) => request(`/orders/${id}/cancel`, {
+  get: id => customerRequest(`/orders/${id}`),
+  cancel: (id, reason) => customerRequest(`/orders/${id}/cancel`, {
     method: 'PATCH',
-    headers: getCustomerAuthHeaders(),
     body: { reason: reason || null },
   }),
-
-  // Protected - kitchen staff only
-  getActive: () => authRequest('/orders/active'),
+  getActive: (channel = 'cafe') => authRequest(`/orders/active?channel=${encodeURIComponent(channel)}`),
   updateStatus: (id, status, reason) => authRequest(`/orders/${id}/status`, {
     method: 'PATCH',
     body: reason ? { status, reason } : { status },
   }),
-
-  // Kitchen open/closed (kitchen staff)
   getKitchenStatus: () => authRequest('/orders/kitchen-status'),
   setKitchenStatus: (open, message) => authRequest('/orders/kitchen-status', {
     method: 'PATCH',
@@ -163,172 +125,85 @@ export const orderAPI = {
   }),
 };
 
-// ============ Settings endpoints (public read, protected write) ============
 export const settingsAPI = {
-  // Public endpoint for checkout
-  getTaxRate: () => request('/admin/public/settings')
-    .then(s => parseFloat(s?.tax_rate || '0.0825'))
-    .catch(() => 0.0825), // Fallback on error
-
-  // Public announcement
+  getTaxRate: (channel = 'cafe') => request(`/admin/public/settings?channel=${encodeURIComponent(channel)}`)
+    .then(value => Number.parseFloat(value?.tax_rate || '0.0825'))
+    .catch(() => 0.0825),
   getAnnouncement: () => request('/admin/public/announcement')
     .catch(() => ({ enabled: false, text: '' })),
-
-  // Public kitchen open/closed status — fail open so customers can still order if API hiccups
   getKitchenStatus: () => request('/admin/public/kitchen-status')
     .catch(() => ({ open: true, message: '' })),
-
-  // Public "Most Popular" rail (curated list, server-resolved to full items)
-  getPopularItems: () => request('/admin/public/popular-items')
-    .catch(() => []),
+  getPopularItems: () => request('/admin/public/popular-items').catch(() => []),
 };
 
-// ============ Admin endpoints (all protected except verifyPin) ============
 export const adminAPI = {
-  // Authentication
-  verifyPin: async (pin) => {
-    const result = await request('/admin/verify-pin', {
-      method: 'POST',
-      body: { pin },
-    });
-
-    // Store token on successful authentication
-    if (result.success && result.token) {
-      setAuthToken(result.token);
+  signIn: async (email, password) => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message || 'Sign in failed');
+    const role = data.user?.app_metadata?.role;
+    if (!['staff', 'admin'].includes(role)) {
+      await supabase.auth.signOut({ scope: 'local' });
+      throw new Error('This account does not have staff access');
     }
-
-    return result;
+    return { success: true, user: data.user };
   },
-
-  // Verify current token is still valid
   verifyToken: () => authRequest('/admin/verify-token'),
-
-  // Logout - clear token
-  logout: () => {
-    clearAuthToken();
-    return Promise.resolve({ success: true });
-  },
-
-  // Stats
+  logout: () => supabase.auth.signOut({ scope: 'local' }),
   getStats: () => authRequest('/admin/stats'),
-
-  // Settings
   getSettings: () => authRequest('/admin/settings'),
   updateSetting: (key, value) => authRequest(`/admin/settings/${key}`, {
-    method: 'PATCH',
-    body: { value },
+    method: 'PATCH', body: { value },
   }),
-
-  // Categories
   getCategories: () => authRequest('/admin/categories'),
-  getCategory: (id) => authRequest(`/admin/categories/${id}`),
-  createCategory: (data) => authRequest('/admin/categories', {
-    method: 'POST',
-    body: data,
-  }),
-  updateCategory: (id, data) => authRequest(`/admin/categories/${id}`, {
-    method: 'PUT',
-    body: data,
-  }),
-  deleteCategory: (id) => authRequest(`/admin/categories/${id}`, {
-    method: 'DELETE',
-  }),
-
-  // Menu Items
+  getCategory: id => authRequest(`/admin/categories/${id}`),
+  createCategory: data => authRequest('/admin/categories', { method: 'POST', body: data }),
+  updateCategory: (id, data) => authRequest(`/admin/categories/${id}`, { method: 'PUT', body: data }),
+  deleteCategory: id => authRequest(`/admin/categories/${id}`, { method: 'DELETE' }),
   getItems: () => authRequest('/admin/items'),
-  getItem: (id) => authRequest(`/admin/items/${id}`),
-  createItem: (data) => authRequest('/admin/items', {
-    method: 'POST',
-    body: data,
-  }),
-  updateItem: (id, data) => authRequest(`/admin/items/${id}`, {
-    method: 'PUT',
-    body: data,
-  }),
-  deleteItem: (id) => authRequest(`/admin/items/${id}`, {
-    method: 'DELETE',
-  }),
+  getItem: id => authRequest(`/admin/items/${id}`),
+  createItem: data => authRequest('/admin/items', { method: 'POST', body: data }),
+  updateItem: (id, data) => authRequest(`/admin/items/${id}`, { method: 'PUT', body: data }),
+  deleteItem: id => authRequest(`/admin/items/${id}`, { method: 'DELETE' }),
   toggleItemAvailability: (id, available) => authRequest(`/admin/items/${id}/availability`, {
-    method: 'PATCH',
-    body: { available },
+    method: 'PATCH', body: { available },
   }),
-
-  // Modifier Groups
   getModifierGroups: () => authRequest('/admin/modifier-groups'),
-  getModifierGroup: (id) => authRequest(`/admin/modifier-groups/${id}`),
-  createModifierGroup: (data) => authRequest('/admin/modifier-groups', {
-    method: 'POST',
-    body: data,
-  }),
-  updateModifierGroup: (id, data) => authRequest(`/admin/modifier-groups/${id}`, {
-    method: 'PUT',
-    body: data,
-  }),
-  deleteModifierGroup: (id) => authRequest(`/admin/modifier-groups/${id}`, {
-    method: 'DELETE',
-  }),
-
-  // Modifier Options
+  getModifierGroup: id => authRequest(`/admin/modifier-groups/${id}`),
+  createModifierGroup: data => authRequest('/admin/modifier-groups', { method: 'POST', body: data }),
+  updateModifierGroup: (id, data) => authRequest(`/admin/modifier-groups/${id}`, { method: 'PUT', body: data }),
+  deleteModifierGroup: id => authRequest(`/admin/modifier-groups/${id}`, { method: 'DELETE' }),
   getModifierOptions: () => authRequest('/admin/modifier-options'),
-  createModifierOption: (data) => authRequest('/admin/modifier-options', {
-    method: 'POST',
-    body: data,
-  }),
-  updateModifierOption: (id, data) => authRequest(`/admin/modifier-options/${id}`, {
-    method: 'PUT',
-    body: data,
-  }),
-  deleteModifierOption: (id) => authRequest(`/admin/modifier-options/${id}`, {
-    method: 'DELETE',
-  }),
-
-  // Item-Modifier Group linking
+  createModifierOption: data => authRequest('/admin/modifier-options', { method: 'POST', body: data }),
+  updateModifierOption: (id, data) => authRequest(`/admin/modifier-options/${id}`, { method: 'PUT', body: data }),
+  deleteModifierOption: id => authRequest(`/admin/modifier-options/${id}`, { method: 'DELETE' }),
   setItemModifierGroups: (itemId, groupIds) => authRequest(`/admin/items/${itemId}/modifier-groups`, {
-    method: 'PUT',
-    body: { group_ids: groupIds },
+    method: 'PUT', body: { group_ids: groupIds },
   }),
-
-  // Image Upload
-  uploadImage: async (file) => {
-    const formData = new FormData();
-    formData.append('image', file);
-    return authRequest('/admin/upload', {
-      method: 'POST',
-      body: formData,
-    });
+  uploadImage: file => {
+    const form = new FormData();
+    form.append('image', file);
+    return authRequest('/admin/upload', { method: 'POST', body: form });
   },
-  deleteImage: (filename) => authRequest(`/admin/upload/${filename}`, {
-    method: 'DELETE',
-  }),
-
-  // Backup Management
+  deleteImage: filename => authRequest(`/admin/upload/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
   getBackupInfo: () => authRequest('/admin/backup/info'),
   getBackups: () => authRequest('/admin/backups'),
   createBackup: () => authRequest('/admin/backup', { method: 'POST' }),
-  restoreBackup: (filename) => authRequest(`/admin/backup/${filename}/restore`, { method: 'POST' }),
-  deleteBackup: (filename) => authRequest(`/admin/backup/${filename}`, { method: 'DELETE' }),
+  restoreBackup: filename => authRequest(`/admin/backup/${filename}/restore`, { method: 'POST' }),
+  deleteBackup: filename => authRequest(`/admin/backup/${filename}`, { method: 'DELETE' }),
   cleanupBackups: (days = 7) => authRequest(`/admin/backups/cleanup?days=${days}`, { method: 'DELETE' }),
-
-  // Order History
   getOrders: (params = {}) => {
-    const searchParams = new URLSearchParams();
-    if (params.page) searchParams.set('page', params.page);
-    if (params.limit) searchParams.set('limit', params.limit);
-    if (params.status) searchParams.set('status', params.status);
-    if (params.startDate) searchParams.set('startDate', params.startDate);
-    if (params.endDate) searchParams.set('endDate', params.endDate);
-    if (params.search) searchParams.set('search', params.search);
-    const query = searchParams.toString();
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value)).toString();
     return authRequest(`/admin/orders${query ? `?${query}` : ''}`);
   },
   getOrderStats: (startDate, endDate) => {
-    const searchParams = new URLSearchParams();
-    if (startDate) searchParams.set('startDate', startDate);
-    if (endDate) searchParams.set('endDate', endDate);
-    const query = searchParams.toString();
+    const query = new URLSearchParams(Object.entries({ startDate, endDate }).filter(([, value]) => value)).toString();
     return authRequest(`/admin/orders/stats${query ? `?${query}` : ''}`);
   },
-  getOrder: (id) => authRequest(`/admin/orders/${id}`),
+  getOrder: id => authRequest(`/admin/orders/${id}`),
+  getPartnerMenuImports: () => authRequest('/admin/partner-menu/imports'),
+  getPartnerMenuCandidates: id => authRequest(`/admin/partner-menu/imports/${id}/candidates`),
+  refreshPartnerMenu: () => authRequest('/admin/partner-menu/imports/refresh', { method: 'POST' }),
+  publishPartnerMenuImport: id => authRequest(`/admin/partner-menu/imports/${id}/publish`, { method: 'POST' }),
 };
 
 export default { menuAPI, orderAPI, adminAPI, settingsAPI };

@@ -2,8 +2,6 @@ import { createContext, useContext, useReducer, useEffect } from 'react';
 
 const CartContext = createContext();
 
-const STORAGE_KEY = 'muze_cart';
-
 const initialState = {
   items: [],
   customerName: '',
@@ -76,29 +74,44 @@ function cartReducer(state, action) {
   }
 }
 
-export function CartProvider({ children }) {
-  const [state, dispatch] = useReducer(cartReducer, initialState);
+function loadStoredCart(storageKey) {
+  const saved = localStorage.getItem(storageKey);
+  if (!saved) return initialState;
+  try {
+    const parsed = JSON.parse(saved);
+    return {
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+      customerName: typeof parsed.customerName === 'string' ? parsed.customerName : '',
+    };
+  } catch (error) {
+    console.error('Failed to load cart from storage:', error);
+    return initialState;
+  }
+}
 
-  // Load cart from localStorage on mount
+export function CartProvider({ children, channel = 'cafe' }) {
+  const storageKey = `muze_cart_${channel}`;
+  const [state, dispatch] = useReducer(cartReducer, storageKey, loadStoredCart);
+
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        dispatch({ type: 'LOAD_CART', payload: parsed });
-      } catch (e) {
-        console.error('Failed to load cart from storage:', e);
-      }
+    const wrongChannel = state.items.some(item => item.channel && item.channel !== channel);
+    if (wrongChannel) {
+      dispatch({ type: 'CLEAR_CART' });
+      localStorage.removeItem(storageKey);
     }
-  }, []);
+  }, [channel, state.items, storageKey]);
 
-  // Save cart to localStorage on changes
+  // Save this storefront's cart independently.
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(state));
+    } catch (error) {
+      console.error('Failed to save cart to storage:', error);
+    }
+  }, [state, storageKey]);
 
   const addItem = (item) => {
-    dispatch({ type: 'ADD_ITEM', payload: item });
+    dispatch({ type: 'ADD_ITEM', payload: { ...item, channel } });
   };
 
   const removeItem = (cartId) => {
@@ -123,7 +136,7 @@ export function CartProvider({ children }) {
 
   const clearCart = () => {
     dispatch({ type: 'CLEAR_CART' });
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(storageKey);
   };
 
   const getItemTotal = (item) => {
@@ -149,6 +162,7 @@ export function CartProvider({ children }) {
     <CartContext.Provider
       value={{
         items: state.items,
+        channel,
         customerName: state.customerName,
         cartTotal,
         cartCount,

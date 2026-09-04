@@ -7,20 +7,22 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "DATABASE_PATH=:memory: node --test"
+    "test": "node --test",
+    "seed": "node scripts/seedSupabase.js",
+    "staff:create": "node scripts/createStaffUser.js",
+    "migrate:sqlite": "node scripts/migrateSqlite.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.6.0",
+    "@supabase/supabase-js": "2.114.0",
     "cors": "^2.8.5",
-    "csv-parse": "^5.5.6",
     "dotenv": "^17.2.3",
-    "express": "^4.21.0",
+    "express": "5.2.1",
     "express-rate-limit": "^8.2.1",
-    "jsonwebtoken": "^9.0.3",
-    "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.10.1",
-    "socket.io": "^4.7.5",
-    "xlsx": "^0.18.5",
+    "multer": "2.3.0",
+    "nodemailer": "9.1.1",
+    "postgres": "3.4.9",
+    "square": "45.1.0",
+    "stripe": "22.6.1",
     "zod": "^4.3.5"
   }
 }

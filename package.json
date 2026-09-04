@@ -1,19 +1,29 @@
 {
   "name": "muze-order",
   "version": "1.0.0",
+  "type": "module",
   "description": "Muze Office Web Ordering System",
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "server": "cd server && node index.js",
-    "client": "cd client && npm run dev",
-    "build": "cd client && npm run build",
-    "test": "cd server && npm test",
-    "start": "cd server && NODE_ENV=production node index.js",
-    "install-all": "npm install && cd client && npm install && cd ../server && npm install"
+    "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
+    "server": "npm run start -w server",
+    "client": "npm run dev -w client",
+    "build": "npm run build -w client",
+    "test": "npm test -w server",
+    "seed": "npm run seed -w server",
+    "staff:create": "npm run staff:create -w server",
+    "migrate:sqlite": "npm run migrate:sqlite -w server --",
+    "start": "npm run start -w server"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": "24.x"
+  },
   "devDependencies": {
     "concurrently": "^8.2.2"
   }

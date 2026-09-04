@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { ShoppingCart, Coffee, Receipt, Megaphone, Lock, Sparkles } from 'lucide-react';
+import { ShoppingCart, Coffee, Receipt, Lock, Sparkles } from 'lucide-react';
 import { menuAPI, orderAPI, settingsAPI } from '../utils/api';
 import { useCart } from '../context/CartContext';
 import { formatPriceFromDollars, formatPickupNumber } from '../utils/formatters';
@@ -12,14 +12,16 @@ import HeroSection from '../components/Menu/HeroSection';
 import PartnerCardsSection from '../components/Menu/PartnerCardsSection';
 import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
+import PortalHomeLink from '../components/PortalHomeLink';
 
-export default function MenuPage() {
+export default function MenuPage({ basePath = '/cafe' }) {
   const navigate = useNavigate();
   const { cartCount, cartTotal } = useCart();
 
   const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -67,22 +69,22 @@ export default function MenuPage() {
 
   async function checkForActiveOrder() {
     try {
-      const savedOrder = localStorage.getItem('muze_last_order');
+      const savedOrder = localStorage.getItem('muze_last_order_cafe');
       if (!savedOrder) return;
       const { orderId, timestamp } = JSON.parse(savedOrder);
       const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
       if (timestamp < twoHoursAgo) {
-        localStorage.removeItem('muze_last_order');
+        localStorage.removeItem('muze_last_order_cafe');
         return;
       }
       const order = await orderAPI.get(orderId);
       if (order && order.status !== 'completed' && order.status !== 'cancelled') {
         setActiveOrder(order);
       } else {
-        localStorage.removeItem('muze_last_order');
+        localStorage.removeItem('muze_last_order_cafe');
       }
     } catch {
-      localStorage.removeItem('muze_last_order');
+      localStorage.removeItem('muze_last_order_cafe');
     }
   }
 
@@ -90,8 +92,8 @@ export default function MenuPage() {
     try {
       setLoading(true);
       const [categoriesData, itemsData] = await Promise.all([
-        menuAPI.getCategories(),
-        menuAPI.getItems(),
+        menuAPI.getCategories('cafe'),
+        menuAPI.getItems('cafe'),
       ]);
       setCategories(categoriesData || []);
       setMenuItems(itemsData || []);
@@ -142,10 +144,16 @@ export default function MenuPage() {
     <div className="min-h-screen pb-32 relative">
       <GradientMesh />
 
+      <header className="relative z-20 px-4 pt-3">
+        <div className="mx-auto max-w-5xl">
+          <PortalHomeLink />
+        </div>
+      </header>
+
       {/* Active Order Banner — kept lightweight, sits above the hero */}
       {activeOrder && (
         <Link
-          to={`/confirmation/${activeOrder.public_id}`}
+          to={`/orders/${activeOrder.public_id}`}
           className="block bg-muze-dark text-muze-gold px-4 py-3 sticky top-0 z-50 shadow-md"
         >
           <div className="max-w-3xl mx-auto flex items-center justify-between">
@@ -163,15 +171,7 @@ export default function MenuPage() {
         </Link>
       )}
 
-      {/* Announcement & Closed banners */}
-      {announcement.enabled && announcement.text && (
-        <div className="bg-muze-gold text-muze-dark px-4 py-3 shadow-sm">
-          <div className="max-w-3xl mx-auto flex items-start sm:items-center gap-3">
-            <Megaphone className="w-5 h-5 flex-shrink-0 mt-0.5 sm:mt-0" />
-            <p className="text-sm sm:text-base font-medium leading-relaxed whitespace-pre-line">{announcement.text}</p>
-          </div>
-        </div>
-      )}
+      {/* Closed status remains urgent; announcements live in the café hero. */}
       {!kitchenStatus.open && (
         <div className="bg-red-600 text-white px-4 py-3 shadow-sm">
           <div className="max-w-3xl mx-auto flex items-start sm:items-center gap-3">
@@ -190,6 +190,8 @@ export default function MenuPage() {
       <HeroSection
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
+        description="Pay securely with Square, then pick up at Muze."
+        announcement={announcement}
       />
 
       {/* Sticky Category Nav */}
@@ -198,8 +200,8 @@ export default function MenuPage() {
           <div className="max-w-5xl mx-auto px-4">
             <CategoryNav
               categories={categories}
-              selectedCategory={null}
-              onSelectCategory={() => {}}
+              selectedCategory={activeCategory}
+              onSelectCategory={setActiveCategory}
             />
           </div>
         </div>
@@ -270,7 +272,7 @@ export default function MenuPage() {
           intensity="chrome"
           className="max-w-md mx-auto pointer-events-auto"
           panelClassName="px-2 py-2"
-          onClick={() => (cartCount > 0 ? navigate('/cart') : setIsCartOpen(true))}
+          onClick={() => (cartCount > 0 ? navigate(`${basePath}/cart`) : setIsCartOpen(true))}
           overLight
         >
           <div className="flex items-center gap-3 cursor-pointer select-none">
@@ -304,7 +306,11 @@ export default function MenuPage() {
       {selectedItem && (
         <ItemModal item={selectedItem} onClose={() => setSelectedItem(null)} />
       )}
-      <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
+      <CartDrawer
+        isOpen={isCartOpen}
+        onClose={() => setIsCartOpen(false)}
+        cartPath={`${basePath}/cart`}
+      />
     </div>
   );
 }

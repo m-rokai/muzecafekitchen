@@ -9,7 +9,10 @@
 //
 // You can edit the wording in CLOSURE without touching any other file.
 
-export const CLOSED = true;
+// Production stays closed unless an environment explicitly opts into ordering.
+// This lets local/Preview deployments expose the in-progress storefront without
+// accidentally reopening the live site.
+export const CLOSED = import.meta.env.VITE_ORDERING_CLOSED !== 'false';
 
 export const CLOSURE = {
   title: "We're temporarily closed",

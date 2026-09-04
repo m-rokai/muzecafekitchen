@@ -1,6 +1,5 @@
-// Bigger horizontal-scrolling category pills. Acts as scroll-to-anchor:
-// tapping a pill scrolls the corresponding category section into view.
-// Falls back to the existing filter pattern if the parent doesn't pass anchors.
+// Uses a familiar select on narrow screens and wrapped jump links elsewhere.
+// Both controls scroll the corresponding menu section into view.
 export default function CategoryNav({
   categories,
   selectedCategory,
@@ -19,15 +18,33 @@ export default function CategoryNav({
   }
 
   return (
-    <div className="overflow-x-auto scrollbar-hide -mx-4 px-4">
-      <div className="flex gap-3 py-2 min-w-max">
+    <nav aria-label="Menu categories" className="py-2 sm:py-1">
+      <div className="sm:hidden">
+        <label htmlFor="menu-category-jump" className="sr-only">Jump to a menu category</label>
+        <select
+          id="menu-category-jump"
+          value={selectedCategory || ''}
+          onChange={(event) => {
+            const category = categories.find(item => item.id === Number(event.target.value));
+            if (category) handleClick(category);
+          }}
+          className="h-11 w-full rounded-xl border border-muze-gold/45 bg-white/90 px-3 text-sm font-semibold text-muze-dark shadow-sm focus:border-muze-gold focus:outline-none focus:ring-2 focus:ring-muze-gold"
+        >
+          <option value="">Jump to a category</option>
+          {categories.map(category => (
+            <option key={category.id} value={category.id}>{category.name}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="hidden flex-wrap justify-center gap-2 py-2 sm:flex">
         {categories.map(category => {
           const active = selectedCategory === category.id;
           return (
             <button
               key={category.id}
               onClick={() => handleClick(category)}
-              className={`px-5 py-2.5 rounded-full text-sm font-semibold whitespace-nowrap transition-all border shadow-sm ${
+              className={`rounded-full border px-4 py-2 text-sm font-semibold whitespace-nowrap shadow-sm transition-all ${
                 active
                   ? 'bg-muze-dark text-muze-gold border-muze-dark shadow-md'
                   : 'bg-white text-muze-dark border-muze-gold/50 hover:bg-muze-gold/15 hover:border-muze-gold hover:shadow-md'
@@ -38,6 +55,6 @@ export default function CategoryNav({
           );
         })}
       </div>
-    </div>
+    </nav>
   );
 }

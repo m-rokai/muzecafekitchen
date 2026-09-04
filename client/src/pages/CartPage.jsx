@@ -1,34 +1,41 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Minus, Plus, Trash2, ShoppingBag } from 'lucide-react';
+import { ArrowLeft, CalendarClock, Minus, Plus, Trash2, ShoppingBag } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { settingsAPI } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
 import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
+import PortalHomeLink from '../components/PortalHomeLink';
+import { getPartnerSchedule } from '../utils/partnerSchedule';
+import { calculateOrderTotals } from '../utils/pricing';
 
-export default function CartPage() {
+export default function CartPage({ basePath = '/cafe', channel = 'cafe', paymentProvider = 'Square' }) {
   const navigate = useNavigate();
   const { items, cartTotal, updateQuantity, removeItem, getItemTotal } = useCart();
   const [taxRate, setTaxRate] = useState(0.0825);
 
   useEffect(() => {
-    settingsAPI.getTaxRate().then(setTaxRate).catch(() => {});
-  }, []);
+    settingsAPI.getTaxRate(channel).then(setTaxRate).catch(() => {});
+  }, [channel]);
 
-  const tax = cartTotal * taxRate;
-  const total = cartTotal + tax;
+  const taxIncluded = channel === 'partner_meal';
+  const { subtotal, tax, total } = calculateOrderTotals(cartTotal, taxRate, { taxIncluded });
+  const preorderSchedule = channel === 'partner_meal'
+    ? getPartnerSchedule(items[0]?.menu_week)
+    : null;
 
   if (items.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center relative">
         <GradientMesh />
+        <PortalHomeLink className="absolute left-4 top-4 z-20" />
         <div className="text-center p-8 relative z-10">
           <ShoppingBag className="w-16 h-16 text-muze-brown/40 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-muze-dark mb-2">Your cart is empty</h2>
           <p className="text-muze-dark/60 mb-6">Add something delicious to get started.</p>
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate(basePath)}
             className="px-6 py-3 rounded-full bg-muze-dark text-muze-gold font-semibold hover:bg-muze-brown hover:text-white transition-colors shadow-md"
           >
             Browse Menu
@@ -46,7 +53,7 @@ export default function CartPage() {
       <header className="sticky top-0 z-30 backdrop-blur-md bg-white/60 border-b border-white/40">
         <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate(basePath)}
             className="w-11 h-11 rounded-full bg-white/80 hover:bg-white flex items-center justify-center transition-colors"
             aria-label="Back to menu"
           >
@@ -58,10 +65,25 @@ export default function CartPage() {
               {items.length} item{items.length === 1 ? '' : 's'}
             </p>
           </div>
+          <PortalHomeLink className="ml-auto" label="Home" />
         </div>
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6">
+        {preorderSchedule ? (
+          <div className={`mb-5 rounded-2xl border p-5 ${preorderSchedule.closed ? 'border-red-200 bg-red-50' : 'border-muze-gold/40 bg-amber-50'}`}>
+            <div className="flex items-start gap-3">
+              <CalendarClock className="mt-0.5 h-6 w-6 flex-shrink-0 text-muze-brown" />
+              <div>
+                <p className="font-bold text-muze-dark">Weekly meal pre-order</p>
+                <p className="mt-1 text-sm text-muze-dark/75">Order by {preorderSchedule.deadlineLabel}.</p>
+                <p className="text-sm text-muze-dark/75">Delivered to Muze for pickup {preorderSchedule.deliveryLabel}.</p>
+                {preorderSchedule.closed ? <p className="mt-2 text-sm font-semibold text-red-700">This pre-order window is closed.</p> : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {/* Cart Items */}
         <div className="space-y-3 mb-6">
           {items.map(item => (
@@ -125,7 +147,7 @@ export default function CartPage() {
 
         {/* Add more */}
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate(basePath)}
           className="w-full py-4 text-muze-brown font-semibold rounded-2xl border-2 border-dashed border-muze-brown/30 hover:border-muze-brown hover:bg-muze-brown/5 transition-colors mb-6"
         >
           + Add more items
@@ -136,11 +158,11 @@ export default function CartPage() {
           <h3 className="font-bold text-muze-dark text-lg mb-4">Order Summary</h3>
           <div className="space-y-3 text-muze-dark/80">
             <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span className="font-medium">{formatPriceFromDollars(cartTotal)}</span>
+              <span>{taxIncluded ? 'Subtotal before tax' : 'Subtotal'}</span>
+              <span className="font-medium">{formatPriceFromDollars(subtotal)}</span>
             </div>
             <div className="flex justify-between">
-              <span>Tax ({(taxRate * 100).toFixed(2)}%)</span>
+              <span>{taxIncluded ? 'Nevada tax included' : `Tax (${(taxRate * 100).toFixed(2)}%)`}</span>
               <span className="font-medium">{formatPriceFromDollars(tax)}</span>
             </div>
             <div className="flex justify-between pt-3 border-t border-muze-gold/30 text-muze-dark text-xl font-bold">
@@ -150,10 +172,11 @@ export default function CartPage() {
           </div>
         </GlassPanel>
 
-        {/* Pay-at-pickup */}
+        {/* Provider-aware online payment */}
         <div className="mt-5 p-4 bg-amber-50/80 rounded-2xl border border-amber-200">
           <p className="text-amber-900 text-sm text-center">
-            <strong>Pay at pickup.</strong> Settle up when you collect your order at Muze Office.
+            <strong>{preorderSchedule ? 'Weekly pre-order for Monday pickup at Muze.' : 'Pickup at Muze.'}</strong> Payment is processed securely through {paymentProvider} before your order is confirmed.
+            {taxIncluded ? ' All listed meal prices include Nevada sales tax.' : ''}
           </p>
         </div>
       </main>
@@ -161,10 +184,11 @@ export default function CartPage() {
       {/* Sticky Checkout CTA */}
       <div className="fixed bottom-4 left-0 right-0 px-4 z-40">
         <button
-          onClick={() => navigate('/checkout')}
-          className="w-full max-w-2xl mx-auto block py-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-lg hover:bg-muze-brown hover:text-white transition-colors shadow-2xl"
+          onClick={() => navigate(`${basePath}/checkout`)}
+          disabled={preorderSchedule?.closed}
+          className="w-full max-w-2xl mx-auto block py-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-lg hover:bg-muze-brown hover:text-white transition-colors shadow-2xl disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Continue to Checkout · {formatPriceFromDollars(total)}
+          {preorderSchedule?.closed ? 'Pre-orders closed for this week' : `Continue to Checkout · ${formatPriceFromDollars(total)}`}
         </button>
       </div>
     </div>

@@ -3,8 +3,9 @@ import { Plus } from 'lucide-react';
 import { formatPriceFromDollars } from '../../utils/formatters';
 import { useCart } from '../../context/CartContext';
 import { getCategoryStyle } from './categoryIcons';
+import PossibleAllergens from './PossibleAllergens';
 
-export default function MenuItemCard({ item, onClick, index = 0 }) {
+export default function MenuItemCard({ item, onClick, index = 0, disabled = false }) {
   const { addItem } = useCart();
   const { Icon, tint } = getCategoryStyle(item.category_name || '', item.name || '');
   const [pingKey, setPingKey] = useState(0);
@@ -19,8 +20,7 @@ export default function MenuItemCard({ item, onClick, index = 0 }) {
   // Stagger entrance — cap delay so late cards don't feel laggy.
   const staggerDelay = `${Math.min(index, 11) * 40}ms`;
 
-  function handleQuickAdd(e) {
-    e.stopPropagation();
+  function handleQuickAdd() {
     if (!canQuickAdd) {
       onClick();
       return;
@@ -29,6 +29,7 @@ export default function MenuItemCard({ item, onClick, index = 0 }) {
       id: item.id,
       name: item.name,
       price: item.price,
+      menu_week: item.menu_week || null,
       quantity: 1,
       modifiers: [],
       specialInstructions: '',
@@ -38,16 +39,22 @@ export default function MenuItemCard({ item, onClick, index = 0 }) {
     pingTimer.current = setTimeout(() => setPingKey(0), 650);
   }
 
-  const unavailable = item.available === 0 || item.available === false;
+  const unavailable = disabled || item.available === 0 || item.available === false;
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={unavailable}
+    <article
       style={{ animationDelay: staggerDelay }}
-      className={`animate-fade-up group text-left w-full flex flex-col rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 overflow-hidden ${unavailable ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+      className={`animate-fade-up group relative text-left w-full flex flex-col rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 overflow-hidden ${unavailable ? 'opacity-50' : ''}`}
     >
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={unavailable}
+        aria-label={`View ${item.name}`}
+        className="absolute inset-0 z-10 rounded-2xl disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-muze-gold/70"
+      >
+        <span className="sr-only">View {item.name}</span>
+      </button>
       {/* Visual zone */}
       <div className={`relative aspect-[4/3] bg-gradient-to-br ${tint} flex items-center justify-center overflow-hidden`}>
         {item.image_url ? (
@@ -58,7 +65,7 @@ export default function MenuItemCard({ item, onClick, index = 0 }) {
         {unavailable && (
           <span className="absolute inset-0 bg-black/20 flex items-center justify-center">
             <span className="px-3 py-1 rounded-full bg-white/90 text-muze-dark text-xs font-semibold uppercase tracking-wider">
-              Unavailable
+              {disabled ? 'Pre-orders closed' : 'Unavailable'}
             </span>
           </span>
         )}
@@ -70,16 +77,25 @@ export default function MenuItemCard({ item, onClick, index = 0 }) {
         {item.description && (
           <p className="text-sm text-muze-dark/60 mt-1 line-clamp-2">{item.description}</p>
         )}
+        {item.channel === 'partner_meal' ? (
+          <PossibleAllergens allergens={item.possible_allergens} compact />
+        ) : null}
 
         <div className="mt-auto pt-3 flex items-center justify-between">
-          <p className="text-xl font-bold text-muze-brown">
-            {formatPriceFromDollars(item.price)}
-          </p>
-          <span
+          <div>
+            <p className="text-xl font-bold text-muze-brown">
+              {formatPriceFromDollars(item.price)}
+            </p>
+            {item.channel === 'partner_meal' ? (
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muze-dark/50">Tax included</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
             onClick={handleQuickAdd}
-            role="button"
+            disabled={unavailable}
             aria-label={canQuickAdd ? `Add ${item.name} to cart` : `Customize ${item.name}`}
-            className="relative w-12 h-12 rounded-full bg-muze-dark text-muze-gold flex items-center justify-center hover:bg-muze-brown hover:text-white shadow-md transition-colors"
+            className="relative z-20 w-12 h-12 rounded-full bg-muze-dark text-muze-gold flex items-center justify-center hover:bg-muze-brown hover:text-white shadow-md transition-colors disabled:cursor-not-allowed"
           >
             {pingKey > 0 && (
               <span
@@ -89,9 +105,9 @@ export default function MenuItemCard({ item, onClick, index = 0 }) {
               />
             )}
             <Plus className="w-6 h-6 relative" strokeWidth={2.5} />
-          </span>
+          </button>
         </div>
       </div>
-    </button>
+    </article>
   );
 }

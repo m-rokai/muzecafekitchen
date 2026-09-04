@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import * as defaultDb from '../db/database.js';
+import { partnerScheduleForDelivery, validDateOnly } from '../lib/partnerSchedule.js';
 
 export class OrderPricingError extends Error {
   constructor(message, code = 'ORDER_VALIDATION_FAILED', details = []) {
@@ -43,7 +44,8 @@ function centsFor(value, db) {
 export function normalizeOrderRequest(order) {
   return {
     customerName: order.customerName,
-    email: order.email || null,
+    email: order.email,
+    channel: order.channel,
     notes: order.notes || null,
     items: order.items.map(item => ({
       menu_item_id: item.menu_item_id,
@@ -61,14 +63,16 @@ export function normalizeOrderRequest(order) {
  * database menu. Client-provided names, prices, subtotals, and totals are
  * intentionally ignored.
  */
-export function validateAndPriceOrder(order, db = defaultDb) {
+export async function validateAndPriceOrder(order, db = defaultDb, { now = new Date() } = {}) {
   const normalized = normalizeOrderRequest(order);
   const verifiedItems = [];
-  let subtotalCents = 0;
+  const partnerIds = new Set();
+  const partnerDeliveryDates = new Set();
+  let listedPriceTotalCents = 0;
 
   for (let itemIndex = 0; itemIndex < order.items.length; itemIndex += 1) {
     const item = order.items[itemIndex];
-    const menuItem = db.getMenuItem(item.menu_item_id);
+    const menuItem = await db.getMenuItem(item.menu_item_id);
     if (!menuItem) {
       throw new OrderPricingError(
         `Menu item ${item.menu_item_id} was not found`,
@@ -83,8 +87,27 @@ export function validateAndPriceOrder(order, db = defaultDb) {
         [{ path: `items.${itemIndex}.menu_item_id`, message: 'Menu item is unavailable' }],
       );
     }
+    if (menuItem.channel !== order.channel) {
+      throw new OrderPricingError(
+        `${menuItem.name} is not available in this storefront`,
+        'STOREFRONT_ITEM_MISMATCH',
+        [{ path: `items.${itemIndex}.menu_item_id`, message: 'Item belongs to another storefront' }],
+      );
+    }
+    if (menuItem.partner_id) partnerIds.add(menuItem.partner_id);
+    if (order.channel === 'partner_meal') {
+      const deliveryDate = validDateOnly(String(menuItem.menu_week || '').slice(0, 10));
+      if (!deliveryDate) {
+        throw new OrderPricingError(
+          `${menuItem.name} does not have a valid delivery date`,
+          'PARTNER_SCHEDULE_INVALID',
+          [{ path: `items.${itemIndex}.menu_item_id`, message: 'Meal schedule is unavailable' }],
+        );
+      }
+      partnerDeliveryDates.add(deliveryDate);
+    }
 
-    const linkedGroups = db.getModifiersForItem(menuItem.id);
+    const linkedGroups = await db.getModifiersForItem(menuItem.id);
     const groupById = new Map(linkedGroups.map(group => [group.id, group]));
     const seenModifierIds = new Set();
     const selectionsByGroup = new Map();
@@ -92,7 +115,7 @@ export function validateAndPriceOrder(order, db = defaultDb) {
 
     for (let modifierIndex = 0; modifierIndex < item.modifiers.length; modifierIndex += 1) {
       const requested = item.modifiers[modifierIndex];
-      const option = db.getModifierOption(requested.modifier_option_id);
+      const option = await db.getModifierOption(requested.modifier_option_id);
       const path = `items.${itemIndex}.modifiers.${modifierIndex}.modifier_option_id`;
       if (!option) {
         throw new OrderPricingError(
@@ -170,7 +193,7 @@ export function validateAndPriceOrder(order, db = defaultDb) {
       );
     }
     const totalPriceCents = unitWithModifiersCents * item.quantity;
-    subtotalCents += totalPriceCents;
+    listedPriceTotalCents += totalPriceCents;
     verifiedItems.push({
       menuItemId: menuItem.id,
       itemName: menuItem.name,
@@ -182,8 +205,44 @@ export function validateAndPriceOrder(order, db = defaultDb) {
     });
   }
 
-  const taxCents = Math.round(subtotalCents * parseTaxRate(db.getSetting('tax_rate')));
-  const totalCents = subtotalCents + taxCents;
+  if (order.channel === 'partner_meal' && partnerIds.size !== 1) {
+    throw new OrderPricingError(
+      'Partner meal orders must contain items from exactly one partner',
+      'PARTNER_ORDER_MISMATCH',
+      [{ path: 'items', message: 'Choose meals from one partner at a time' }],
+    );
+  }
+  let partnerSchedule = null;
+  if (order.channel === 'partner_meal') {
+    if (partnerDeliveryDates.size !== 1) {
+      throw new OrderPricingError(
+        'Partner meal orders must use one weekly delivery menu',
+        'PARTNER_SCHEDULE_MISMATCH',
+        [{ path: 'items', message: 'Choose meals from one delivery week' }],
+      );
+    }
+    partnerSchedule = partnerScheduleForDelivery([...partnerDeliveryDates][0]);
+    if (new Date(now) >= partnerSchedule.deadline) {
+      const error = new OrderPricingError(
+        'Weekly meal pre-orders closed Wednesday at 12:00 PM Pacific',
+        'PARTNER_PREORDER_CLOSED',
+        [{ path: 'items', message: 'This weekly pre-order window has closed' }],
+      );
+      error.status = 409;
+      throw error;
+    }
+  }
+  const taxSetting = order.channel === 'partner_meal' ? 'partner_tax_rate' : 'tax_rate';
+  const taxFallback = order.channel === 'partner_meal' ? '0.08375' : '0.0825';
+  const taxRate = parseTaxRate(await db.getSetting(taxSetting) ?? taxFallback);
+  const taxIncluded = order.channel === 'partner_meal';
+  const subtotalCents = taxIncluded
+    ? Math.round(listedPriceTotalCents / (1 + taxRate))
+    : listedPriceTotalCents;
+  const taxCents = taxIncluded
+    ? listedPriceTotalCents - subtotalCents
+    : Math.round(subtotalCents * taxRate);
+  const totalCents = taxIncluded ? listedPriceTotalCents : subtotalCents + taxCents;
   return {
     normalized,
     requestHash: hashOrderRequest(normalized),
@@ -191,5 +250,9 @@ export function validateAndPriceOrder(order, db = defaultDb) {
     subtotalCents,
     taxCents,
     totalCents,
+    taxIncluded,
+    partnerId: order.channel === 'partner_meal' ? [...partnerIds][0] : null,
+    partnerDeliveryDate: partnerSchedule?.deliveryDate || null,
+    partnerOrderDeadline: partnerSchedule?.deadline.toISOString() || null,
   };
 }

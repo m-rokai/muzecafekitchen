@@ -1,755 +1,552 @@
+import crypto from 'crypto';
 import express from 'express';
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
 import * as db from '../db/database.js';
-import { generateToken, requireAdmin, requireAuth } from '../middleware/auth.js';
-import { pinRateLimit, adminRateLimit } from '../middleware/rateLimit.js';
+import { requireAdmin, requireAuth } from '../middleware/auth.js';
+import { adminRateLimit } from '../middleware/rateLimit.js';
+import { getSupabaseAdminClient } from '../lib/supabase.js';
 import {
   validateCategory,
   validateMenuItem,
-  validateModifierGroup,
-  validateModifierOption,
   validateSettingValue,
-  validatePin,
 } from '../validators/schemas.js';
-import { sanitizeName, sanitizeText, sanitizeMenuItemName } from '../utils/sanitize.js';
-import { createBackup, listBackups, restoreBackup, deleteBackup, deleteOldBackups, getBackupInfo } from '../services/backup.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Configure uploads directory
-const uploadsDir = process.env.NODE_ENV === 'production'
-  ? '/data/uploads'
-  : path.join(__dirname, '../uploads');
-
-// Ensure uploads directory exists
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-// Multer configuration for image uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    // Generate unique filename with timestamp
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `menu-${uniqueSuffix}${ext}`);
-  },
-});
-
-const fileFilter = (req, file, cb) => {
-  // Accept only image files
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only JPEG, PNG, GIF, and WebP images are allowed'), false);
-  }
-};
-
-const upload = multer({
-  storage,
-  fileFilter,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB max
-  },
-});
+import { sanitizeText, sanitizeMenuItemName } from '../utils/sanitize.js';
+import { importPartnerMenu } from '../services/partnerMenuImport.js';
 
 const router = express.Router();
-
-function getConfiguredStaffPin() {
-  const storedPin = db.getSetting('admin_pin');
-  if (typeof storedPin === 'string' && /^\d{4,6}$/.test(storedPin)) {
-    return storedPin;
-  }
-
-  // A fresh local/test install may use an explicitly configured temporary
-  // credential. Never accept this bootstrap path in production.
-  if (process.env.NODE_ENV !== 'production') {
-    const initialPin = process.env.INITIAL_ADMIN_PIN;
-    if (typeof initialPin === 'string' && /^\d{4,6}$/.test(initialPin)) {
-      return initialPin;
-    }
-  }
-  return null;
-}
-
-// ============ PIN Authentication ============
-// This is the only unprotected route - returns JWT on success
-// Rate limited to prevent brute force attacks
-router.post('/verify-pin', pinRateLimit, (req, res) => {
-  try {
-    // Validate PIN format
-    const validation = validatePin(req.body);
-    if (!validation.success) {
-      return res.status(400).json({ success: false, message: 'Invalid PIN format' });
-    }
-
-    const { pin } = validation.data;
-    const storedPin = getConfiguredStaffPin();
-    if (!storedPin) {
-      return res.status(503).json({
-        success: false,
-        message: 'Staff credential is not configured',
-        code: 'STAFF_CREDENTIAL_NOT_CONFIGURED',
-      });
-    }
-
-    if (pin === storedPin) {
-      // Generate JWT token on successful authentication
-      const token = generateToken({ role: 'admin' });
-      res.json({
-        success: true,
-        token,
-        expiresIn: '8h'
-      });
-    } else {
-      res.status(401).json({ success: false, message: 'Invalid PIN' });
-    }
-  } catch (err) {
-    console.error('Error verifying PIN:', err);
-    res.status(500).json({ message: 'Failed to verify PIN' });
-  }
+const MENU_BUCKET = 'menu-images';
+const MIME_EXTENSIONS = Object.freeze({
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
 });
 
-// Verify token is still valid (for client-side auth check on page load)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, callback) => {
+    callback(null, Boolean(MIME_EXTENSIONS[file.mimetype]));
+  },
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+});
+
+function storageObjectFromUrl(url) {
+  if (typeof url !== 'string') return null;
+  const marker = `/storage/v1/object/public/${MENU_BUCKET}/`;
+  try {
+    const parsed = new URL(url);
+    const index = parsed.pathname.indexOf(marker);
+    if (index < 0) return null;
+    const objectName = decodeURIComponent(parsed.pathname.slice(index + marker.length));
+    return objectName && !objectName.includes('/') && !objectName.includes('..') ? objectName : null;
+  } catch {
+    return null;
+  }
+}
+
+async function removeStorageObject(objectName) {
+  if (!objectName || objectName.includes('/') || objectName.includes('..')) return false;
+  const { error } = await getSupabaseAdminClient().storage.from(MENU_BUCKET).remove([objectName]);
+  if (error) throw error;
+  return true;
+}
+
+// Supabase Auth happens in the browser. This endpoint remains as a session/role check.
 router.get('/verify-token', requireAuth, (req, res) => {
   res.json({ valid: true, auth: req.auth });
 });
 
-// Public settings endpoint (only tax rate, for checkout)
-router.get('/public/settings', (req, res) => {
+router.get('/public/settings', async (req, res) => {
   try {
-    const taxRate = db.getSetting('tax_rate') || '0.0825';
-    res.json({ tax_rate: taxRate });
-  } catch (err) {
-    console.error('Error getting public settings:', err);
+    const channel = req.query.channel === 'partner_meal' ? 'partner_meal' : 'cafe';
+    const settingKey = channel === 'partner_meal' ? 'partner_tax_rate' : 'tax_rate';
+    const fallback = channel === 'partner_meal' ? '0.08375' : '0.0825';
+    res.json({ channel, tax_rate: await db.getSetting(settingKey) || fallback });
+  } catch (error) {
+    console.error('Error getting public settings:', error);
     res.status(500).json({ message: 'Failed to load settings' });
   }
 });
 
-// Public announcement endpoint
-router.get('/public/announcement', (req, res) => {
+router.get('/public/announcement', async (req, res) => {
   try {
-    const enabled = db.getSetting('announcement_enabled') === 'true';
-    const text = db.getSetting('announcement_text') || '';
-    res.json({
-      enabled,
-      text: enabled ? text : '',
-    });
-  } catch (err) {
-    console.error('Error getting announcement:', err);
+    const enabled = await db.getSetting('announcement_enabled') === 'true';
+    const announcement = await db.getSetting('announcement_text') || '';
+    res.json({ enabled, text: enabled ? announcement : '' });
+  } catch (error) {
+    console.error('Error getting announcement:', error);
     res.status(500).json({ message: 'Failed to load announcement' });
   }
 });
 
-// Public kitchen open/closed status (used by menu + checkout pages)
-router.get('/public/kitchen-status', (req, res) => {
+router.get('/public/kitchen-status', async (req, res) => {
   try {
-    const open = db.getSetting('kitchen_open') !== 'false';
-    const message = db.getSetting('kitchen_closed_message') || '';
+    const open = await db.getSetting('kitchen_open') !== 'false';
+    const message = await db.getSetting('kitchen_closed_message') || '';
     res.json({ open, message: open ? '' : message });
-  } catch (err) {
-    console.error('Error getting kitchen status:', err);
+  } catch (error) {
+    console.error('Error getting kitchen status:', error);
     res.status(500).json({ message: 'Failed to load kitchen status' });
   }
 });
 
-// Public "Most Popular" rail — resolves the popular_item_ids setting
-// (comma-separated) into full menu_item rows in the configured order.
-// Items that are missing or unavailable are silently filtered out so the
-// rail never shows broken entries.
-router.get('/public/popular-items', (req, res) => {
+router.get('/public/popular-items', async (req, res) => {
   try {
-    const raw = db.getSetting('popular_item_ids') || '';
-    const ids = raw
-      .split(',')
-      .map(s => parseInt(s.trim(), 10))
-      .filter(n => Number.isInteger(n) && n > 0);
-    if (ids.length === 0) return res.json([]);
-
-    const items = ids
-      .map(id => db.getMenuItem(id))
-      .filter(item => item && item.available !== 0);
-
-    res.json(items);
-  } catch (err) {
-    console.error('Error getting popular items:', err);
+    const raw = await db.getSetting('popular_item_ids') || '';
+    let values;
+    try {
+      const parsed = JSON.parse(raw);
+      values = Array.isArray(parsed) ? parsed : String(raw).split(',');
+    } catch {
+      values = String(raw).split(',');
+    }
+    const ids = values.map(value => Number(value)).filter(Number.isSafeInteger);
+    const items = await Promise.all(ids.map(id => db.getMenuItem(id)));
+    res.json(items.filter(item => item?.available));
+  } catch (error) {
+    console.error('Error getting popular items:', error);
     res.status(500).json({ message: 'Failed to load popular items' });
   }
 });
 
-// ============ All routes below require authentication ============
 router.use(requireAuth);
 router.use(adminRateLimit);
 router.use(requireAdmin);
 
-// ============ Image Upload ============
-router.post('/upload', upload.single('image'), (req, res) => {
+router.post('/upload', upload.single('image'), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ message: 'No image file provided' });
-    }
-    // Return the URL path to the uploaded file
-    const imageUrl = `/uploads/${req.file.filename}`;
-    res.status(201).json({ url: imageUrl, filename: req.file.filename });
-  } catch (err) {
-    console.error('Error uploading image:', err);
-    res.status(500).json({ message: 'Failed to upload image' });
+    if (!req.file) return res.status(400).json({ message: 'A JPEG, PNG, or WebP image is required' });
+    const filename = `menu-${crypto.randomUUID()}${MIME_EXTENSIONS[req.file.mimetype]}`;
+    const storage = getSupabaseAdminClient().storage.from(MENU_BUCKET);
+    const { error } = await storage.upload(filename, req.file.buffer, {
+      cacheControl: '31536000',
+      contentType: req.file.mimetype,
+      upsert: false,
+    });
+    if (error) throw error;
+    const { data } = storage.getPublicUrl(filename);
+    return res.status(201).json({ url: data.publicUrl, filename });
+  } catch (error) {
+    console.error('Error uploading image:', error);
+    return res.status(500).json({ message: 'Failed to upload image' });
   }
 });
 
-// Delete an uploaded image
-router.delete('/upload/:filename', (req, res) => {
+router.delete('/upload/:filename', async (req, res) => {
   try {
-    const { filename } = req.params;
-
-    // Sanitize filename to prevent directory traversal
-    const sanitizedFilename = path.basename(filename);
-    if (sanitizedFilename !== filename || filename.includes('..')) {
+    const filename = req.params.filename;
+    if (!filename || filename.includes('/') || filename.includes('..')) {
       return res.status(400).json({ message: 'Invalid filename' });
     }
-
-    const filePath = path.join(uploadsDir, sanitizedFilename);
-
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: 'Image not found' });
-    }
-
-    // Delete the file
-    fs.unlinkSync(filePath);
-    res.json({ message: 'Image deleted', filename: sanitizedFilename });
-  } catch (err) {
-    console.error('Error deleting image:', err);
-    res.status(500).json({ message: 'Failed to delete image' });
+    await removeStorageObject(filename);
+    return res.json({ message: 'Image deleted', filename });
+  } catch (error) {
+    console.error('Error deleting image:', error);
+    return res.status(500).json({ message: 'Failed to delete image' });
   }
 });
 
-// Get admin stats
-router.get('/stats', (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
-    const orders = db.getTodayOrderCount();
-    const revenue = db.getTodayRevenue();
-
-    res.json({
-      orders,
-      revenue,
-    });
-  } catch (err) {
-    console.error('Error getting stats:', err);
+    const [orders, revenue] = await Promise.all([db.getTodayOrderCount(), db.getTodayRevenue()]);
+    res.json({ orders, revenue });
+  } catch (error) {
+    console.error('Error getting stats:', error);
     res.status(500).json({ message: 'Failed to load stats' });
   }
 });
 
-// ============ Order History ============
-router.get('/orders', (req, res) => {
+router.get('/orders', async (req, res) => {
   try {
-    const {
-      page = 1,
-      limit = 20,
-      status = null,
-      startDate = null,
-      endDate = null,
-      search = null,
-    } = req.query;
-
-    const result = db.getOrderHistory({
-      page: parseInt(page),
-      limit: Math.min(parseInt(limit), 100), // Cap at 100
-      status: status || null,
-      startDate: startDate || null,
-      endDate: endDate || null,
-      search: search || null,
+    const result = await db.getOrderHistory({
+      page: Number.parseInt(req.query.page || '1', 10),
+      limit: Math.min(Number.parseInt(req.query.limit || '20', 10), 100),
+      status: req.query.status || null,
+      startDate: req.query.startDate || null,
+      endDate: req.query.endDate || null,
+      search: req.query.search || null,
     });
-
     res.json(result);
-  } catch (err) {
-    console.error('Error getting order history:', err);
+  } catch (error) {
+    console.error('Error getting order history:', error);
     res.status(500).json({ message: 'Failed to load order history' });
   }
 });
 
-router.get('/orders/stats', (req, res) => {
+router.get('/orders/stats', async (req, res) => {
   try {
-    const { startDate = null, endDate = null } = req.query;
-    const stats = db.getOrderStats(startDate, endDate);
-    res.json(stats);
-  } catch (err) {
-    console.error('Error getting order stats:', err);
+    res.json(await db.getOrderStats(req.query.startDate || null, req.query.endDate || null));
+  } catch (error) {
+    console.error('Error getting order stats:', error);
     res.status(500).json({ message: 'Failed to load order stats' });
   }
 });
 
-router.get('/orders/:id', (req, res) => {
+router.get('/orders/:id', async (req, res) => {
   try {
-    const order = db.getOrder(parseInt(req.params.id));
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
-    }
-    res.json(order);
-  } catch (err) {
-    console.error('Error getting order:', err);
-    res.status(500).json({ message: 'Failed to load order' });
+    const order = await db.getOrder(Number.parseInt(req.params.id, 10));
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    return res.json(order);
+  } catch (error) {
+    console.error('Error getting order:', error);
+    return res.status(500).json({ message: 'Failed to load order' });
   }
 });
 
-// ============ Categories CRUD ============
-router.get('/categories', (req, res) => {
+router.get('/categories', async (req, res) => {
   try {
-    const categories = db.getAllCategories();
-    res.json(categories);
-  } catch (err) {
-    console.error('Error getting categories:', err);
+    res.json(await db.getAllCategories());
+  } catch (error) {
+    console.error('Error getting categories:', error);
     res.status(500).json({ message: 'Failed to load categories' });
   }
 });
 
-router.get('/categories/:id', (req, res) => {
+router.get('/categories/:id', async (req, res) => {
   try {
-    const category = db.getCategory(parseInt(req.params.id));
-    if (!category) {
-      return res.status(404).json({ message: 'Category not found' });
-    }
-    res.json(category);
-  } catch (err) {
-    console.error('Error getting category:', err);
-    res.status(500).json({ message: 'Failed to load category' });
+    const category = await db.getCategory(Number.parseInt(req.params.id, 10));
+    if (!category) return res.status(404).json({ message: 'Category not found' });
+    return res.json(category);
+  } catch (error) {
+    console.error('Error getting category:', error);
+    return res.status(500).json({ message: 'Failed to load category' });
   }
 });
 
-router.post('/categories', (req, res) => {
+router.post('/categories', async (req, res) => {
   try {
-    // Validate input
     const validation = validateCategory(req.body);
     if (!validation.success) {
       return res.status(400).json({ message: 'Invalid category data', errors: validation.errors });
     }
-
-    const { name, description, sort_order } = validation.data;
-    const sanitizedName = sanitizeMenuItemName(name);
-    const sanitizedDesc = sanitizeText(description);
-
-    const id = db.createCategory({
-      name: sanitizedName,
-      description: sanitizedDesc || '',
-      sort_order: sort_order || 0,
-    });
-    res.status(201).json({ id, name: sanitizedName, description: sanitizedDesc || '', sort_order: sort_order || 0 });
-  } catch (err) {
-    console.error('Error creating category:', err);
-    res.status(500).json({ message: 'Failed to create category' });
+    const name = sanitizeMenuItemName(validation.data.name);
+    const description = sanitizeText(validation.data.description) || '';
+    const sortOrder = validation.data.sort_order || 0;
+    const id = await db.createCategory({ name, description, sort_order: sortOrder });
+    return res.status(201).json({ id, name, description, sort_order: sortOrder });
+  } catch (error) {
+    console.error('Error creating category:', error);
+    return res.status(500).json({ message: 'Failed to create category' });
   }
 });
 
-router.put('/categories/:id', (req, res) => {
+router.put('/categories/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const { name, description, sort_order } = req.body;
-    db.updateCategory(id, { name, description, sort_order });
+    const id = Number.parseInt(req.params.id, 10);
+    await db.updateCategory(id, {
+      name: req.body.name,
+      description: req.body.description,
+      sort_order: req.body.sort_order,
+    });
     res.json({ message: 'Category updated', id });
-  } catch (err) {
-    console.error('Error updating category:', err);
+  } catch (error) {
+    console.error('Error updating category:', error);
     res.status(500).json({ message: 'Failed to update category' });
   }
 });
 
-router.delete('/categories/:id', (req, res) => {
+router.delete('/categories/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    db.deleteCategory(id);
+    const id = Number.parseInt(req.params.id, 10);
+    await db.deleteCategory(id);
     res.json({ message: 'Category deleted' });
-  } catch (err) {
-    console.error('Error deleting category:', err);
+  } catch (error) {
+    console.error('Error deleting category:', error);
     res.status(500).json({ message: 'Failed to delete category' });
   }
 });
 
-// ============ Menu Items CRUD ============
-router.get('/items', (req, res) => {
+router.get('/items', async (req, res) => {
   try {
-    const items = db.getAllMenuItemsIncludingUnavailable();
-    res.json(items);
-  } catch (err) {
-    console.error('Error getting items:', err);
+    res.json(await db.getAllMenuItemsIncludingUnavailable());
+  } catch (error) {
+    console.error('Error getting items:', error);
     res.status(500).json({ message: 'Failed to load items' });
   }
 });
 
-router.get('/items/:id', (req, res) => {
+router.get('/items/:id', async (req, res) => {
   try {
-    const item = db.getMenuItem(parseInt(req.params.id));
-    if (!item) {
-      return res.status(404).json({ message: 'Item not found' });
-    }
-    // Include modifier groups linked to this item
-    item.modifier_groups = db.getModifiersForItem(item.id);
-    res.json(item);
-  } catch (err) {
-    console.error('Error getting item:', err);
-    res.status(500).json({ message: 'Failed to load item' });
+    const item = await db.getMenuItem(Number.parseInt(req.params.id, 10));
+    if (!item) return res.status(404).json({ message: 'Item not found' });
+    item.modifier_groups = await db.getModifiersForItem(item.id);
+    return res.json(item);
+  } catch (error) {
+    console.error('Error getting item:', error);
+    return res.status(500).json({ message: 'Failed to load item' });
   }
 });
 
-router.post('/items', (req, res) => {
+router.post('/items', async (req, res) => {
   try {
-    // Validate input
     const validation = validateMenuItem(req.body);
     if (!validation.success) {
       return res.status(400).json({ message: 'Invalid item data', errors: validation.errors });
     }
-
-    const { name, description, price, category_id, available, sort_order, modifier_group_ids, image_url } = validation.data;
-    const sanitizedName = sanitizeMenuItemName(name);
-    const sanitizedDesc = sanitizeText(description);
-
-    const id = db.createMenuItem({
-      name: sanitizedName,
-      description: sanitizedDesc || '',
-      price,
-      category_id: category_id || null,
-      available: available !== undefined ? (available ? 1 : 0) : 1,
-      sort_order: sort_order || 0,
-      image_url: image_url || null,
+    const data = validation.data;
+    const name = sanitizeMenuItemName(data.name);
+    const id = await db.createMenuItem({
+      ...data,
+      name,
+      description: sanitizeText(data.description) || '',
     });
-    // Link modifier groups if provided
-    if (modifier_group_ids && modifier_group_ids.length > 0) {
-      db.setItemModifierGroups(id, modifier_group_ids);
-    }
-    res.status(201).json({ id, name: sanitizedName, price });
-  } catch (err) {
-    console.error('Error creating item:', err);
-    res.status(500).json({ message: 'Failed to create item' });
+    if (data.modifier_group_ids?.length) await db.setItemModifierGroups(id, data.modifier_group_ids);
+    return res.status(201).json({ id, name, price: data.price });
+  } catch (error) {
+    console.error('Error creating item:', error);
+    return res.status(500).json({ message: 'Failed to create item' });
   }
 });
 
-router.put('/items/:id', (req, res) => {
+router.put('/items/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const { name, description, price, category_id, available, sort_order, modifier_group_ids, image_url } = req.body;
-    db.updateMenuItem(id, { name, description, price, category_id, available, sort_order, image_url });
-    // Update modifier group links if provided
-    if (modifier_group_ids !== undefined) {
-      db.setItemModifierGroups(id, modifier_group_ids);
-    }
+    const id = Number.parseInt(req.params.id, 10);
+    const { modifier_group_ids: groupIds, ...updates } = req.body;
+    await db.updateMenuItem(id, updates);
+    if (groupIds !== undefined) await db.setItemModifierGroups(id, groupIds);
     res.json({ message: 'Item updated', id });
-  } catch (err) {
-    console.error('Error updating item:', err);
+  } catch (error) {
+    console.error('Error updating item:', error);
     res.status(500).json({ message: 'Failed to update item' });
   }
 });
 
-router.patch('/items/:id/availability', (req, res) => {
+router.patch('/items/:id/availability', async (req, res) => {
   try {
-    const { available } = req.body;
-    const itemId = parseInt(req.params.id);
-    db.updateMenuItem(itemId, { available: available ? 1 : 0 });
+    await db.updateMenuItem(Number.parseInt(req.params.id, 10), { available: Boolean(req.body.available) });
     res.json({ message: 'Availability updated' });
-  } catch (err) {
-    console.error('Error updating availability:', err);
+  } catch (error) {
+    console.error('Error updating availability:', error);
     res.status(500).json({ message: 'Failed to update availability' });
   }
 });
 
-router.delete('/items/:id', (req, res) => {
+router.delete('/items/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-
-    // Get the item first to check for image
-    const item = db.getMenuItem(id);
-    if (item && item.image_url) {
-      // Extract filename from URL and delete the file
-      const filename = path.basename(item.image_url);
-      const filePath = path.join(uploadsDir, filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
-
-    db.deleteMenuItem(id);
+    const id = Number.parseInt(req.params.id, 10);
+    const item = await db.getMenuItem(id);
+    const objectName = storageObjectFromUrl(item?.image_url);
+    await db.deleteMenuItem(id);
+    if (objectName) await removeStorageObject(objectName);
     res.json({ message: 'Item deleted' });
-  } catch (err) {
-    console.error('Error deleting item:', err);
+  } catch (error) {
+    console.error('Error deleting item:', error);
     res.status(500).json({ message: 'Failed to delete item' });
   }
 });
 
-// ============ Modifier Groups CRUD ============
-router.get('/modifier-groups', (req, res) => {
+router.get('/modifier-groups', async (req, res) => {
   try {
-    const groups = db.getAllModifierGroups();
-    // Include options for each group
-    for (const group of groups) {
-      group.options = db.getModifierOptions(group.id);
-    }
+    const groups = await db.getAllModifierGroups();
+    await Promise.all(groups.map(async group => {
+      group.options = await db.getModifierOptions(group.id, true);
+    }));
     res.json(groups);
-  } catch (err) {
-    console.error('Error getting modifier groups:', err);
+  } catch (error) {
+    console.error('Error getting modifier groups:', error);
     res.status(500).json({ message: 'Failed to load modifier groups' });
   }
 });
 
-router.get('/modifier-groups/:id', (req, res) => {
+router.get('/modifier-groups/:id', async (req, res) => {
   try {
-    const group = db.getModifierGroupWithOptions(parseInt(req.params.id));
-    if (!group) {
-      return res.status(404).json({ message: 'Modifier group not found' });
-    }
-    // Include items linked to this group
-    group.items = db.getItemsForModifierGroup(group.id);
-    res.json(group);
-  } catch (err) {
-    console.error('Error getting modifier group:', err);
-    res.status(500).json({ message: 'Failed to load modifier group' });
+    const group = await db.getModifierGroupWithOptions(Number.parseInt(req.params.id, 10));
+    if (!group) return res.status(404).json({ message: 'Modifier group not found' });
+    group.items = await db.getItemsForModifierGroup(group.id);
+    return res.json(group);
+  } catch (error) {
+    console.error('Error getting modifier group:', error);
+    return res.status(500).json({ message: 'Failed to load modifier group' });
   }
 });
 
-router.post('/modifier-groups', (req, res) => {
+router.post('/modifier-groups', async (req, res) => {
   try {
-    const { name, display_name, min_selections, max_selections, required, sort_order } = req.body;
-    if (!name) {
-      return res.status(400).json({ message: 'Name is required' });
-    }
-    const id = db.createModifierGroup({
-      name,
-      display_name: display_name || name,
-      min_selections: min_selections || 0,
-      max_selections: max_selections || 10,
-      required: required || 0,
-      sort_order: sort_order || 0,
-    });
-    res.status(201).json({ id, name, display_name: display_name || name });
-  } catch (err) {
-    console.error('Error creating modifier group:', err);
-    res.status(500).json({ message: 'Failed to create modifier group' });
+    if (!req.body.name) return res.status(400).json({ message: 'Name is required' });
+    const id = await db.createModifierGroup(req.body);
+    return res.status(201).json({ id, name: req.body.name, display_name: req.body.display_name || req.body.name });
+  } catch (error) {
+    console.error('Error creating modifier group:', error);
+    return res.status(500).json({ message: 'Failed to create modifier group' });
   }
 });
 
-router.put('/modifier-groups/:id', (req, res) => {
+router.put('/modifier-groups/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const { name, display_name, min_selections, max_selections, required, sort_order } = req.body;
-    db.updateModifierGroup(id, { name, display_name, min_selections, max_selections, required, sort_order });
+    const id = Number.parseInt(req.params.id, 10);
+    await db.updateModifierGroup(id, req.body);
     res.json({ message: 'Modifier group updated', id });
-  } catch (err) {
-    console.error('Error updating modifier group:', err);
+  } catch (error) {
+    console.error('Error updating modifier group:', error);
     res.status(500).json({ message: 'Failed to update modifier group' });
   }
 });
 
-router.delete('/modifier-groups/:id', (req, res) => {
+router.delete('/modifier-groups/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    db.deleteModifierGroup(id);
+    const id = Number.parseInt(req.params.id, 10);
+    await db.deleteModifierGroup(id);
     res.json({ message: 'Modifier group deleted' });
-  } catch (err) {
-    console.error('Error deleting modifier group:', err);
+  } catch (error) {
+    console.error('Error deleting modifier group:', error);
     res.status(500).json({ message: 'Failed to delete modifier group' });
   }
 });
 
-// ============ Modifier Options CRUD ============
-router.get('/modifier-options', (req, res) => {
+router.get('/modifier-options', async (req, res) => {
   try {
-    const options = db.getAllModifierOptions();
-    res.json(options);
-  } catch (err) {
-    console.error('Error getting modifier options:', err);
+    res.json(await db.getAllModifierOptions(true));
+  } catch (error) {
+    console.error('Error getting modifier options:', error);
     res.status(500).json({ message: 'Failed to load modifier options' });
   }
 });
 
-router.post('/modifier-options', (req, res) => {
+router.post('/modifier-options', async (req, res) => {
   try {
-    const { group_id, name, display_name, price_adjustment, available, sort_order } = req.body;
-    if (!group_id || !name) {
+    if (!req.body.group_id || !req.body.name) {
       return res.status(400).json({ message: 'Group ID and name are required' });
     }
-    const id = db.createModifierOption({
-      group_id,
-      name,
-      display_name: display_name || name,
-      price_adjustment: price_adjustment || 0,
-      available: available !== undefined ? available : 1,
-      sort_order: sort_order || 0,
-    });
-    res.status(201).json({ id, name, price_adjustment: price_adjustment || 0 });
-  } catch (err) {
-    console.error('Error creating modifier option:', err);
-    res.status(500).json({ message: 'Failed to create modifier option' });
+    const id = await db.createModifierOption(req.body);
+    return res.status(201).json({ id, name: req.body.name, price_adjustment: req.body.price_adjustment || 0 });
+  } catch (error) {
+    console.error('Error creating modifier option:', error);
+    return res.status(500).json({ message: 'Failed to create modifier option' });
   }
 });
 
-router.put('/modifier-options/:id', (req, res) => {
+router.put('/modifier-options/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const { name, display_name, price_adjustment, available, sort_order, group_id } = req.body;
-    db.updateModifierOption(id, { name, display_name, price_adjustment, available, sort_order, group_id });
+    const id = Number.parseInt(req.params.id, 10);
+    await db.updateModifierOption(id, req.body);
     res.json({ message: 'Modifier option updated', id });
-  } catch (err) {
-    console.error('Error updating modifier option:', err);
+  } catch (error) {
+    console.error('Error updating modifier option:', error);
     res.status(500).json({ message: 'Failed to update modifier option' });
   }
 });
 
-router.delete('/modifier-options/:id', (req, res) => {
+router.delete('/modifier-options/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    db.deleteModifierOption(id);
+    const id = Number.parseInt(req.params.id, 10);
+    await db.deleteModifierOption(id);
     res.json({ message: 'Modifier option deleted' });
-  } catch (err) {
-    console.error('Error deleting modifier option:', err);
+  } catch (error) {
+    console.error('Error deleting modifier option:', error);
     res.status(500).json({ message: 'Failed to delete modifier option' });
   }
 });
 
-// ============ Item-Modifier Group Linking ============
-router.put('/items/:id/modifier-groups', (req, res) => {
+router.put('/items/:id/modifier-groups', async (req, res) => {
   try {
-    const itemId = parseInt(req.params.id);
-    const { group_ids } = req.body;
-    if (!Array.isArray(group_ids)) {
+    if (!Array.isArray(req.body.group_ids)) {
       return res.status(400).json({ message: 'group_ids must be an array' });
     }
-    db.setItemModifierGroups(itemId, group_ids);
-    res.json({ message: 'Modifier groups updated for item', itemId });
-  } catch (err) {
-    console.error('Error linking modifier groups:', err);
-    res.status(500).json({ message: 'Failed to update modifier groups' });
+    const itemId = Number.parseInt(req.params.id, 10);
+    await db.setItemModifierGroups(itemId, req.body.group_ids);
+    return res.json({ message: 'Modifier groups updated for item', itemId });
+  } catch (error) {
+    console.error('Error linking modifier groups:', error);
+    return res.status(500).json({ message: 'Failed to update modifier groups' });
   }
 });
 
-// Clear all menu items and modifiers
-router.delete('/clear-menu', (req, res) => {
+router.delete('/clear-menu', async (req, res) => {
   try {
-    // Clear in order to avoid foreign key issues
-    db.clearItemModifierLinks();
-    db.deleteAllModifierOptions();
-    db.deleteAllModifierGroups();
-    db.deleteAllMenuItems();
-
+    await db.clearItemModifierLinks();
+    await db.deleteAllModifierOptions();
+    await db.deleteAllModifierGroups();
+    await db.deleteAllMenuItems();
     res.json({ message: 'Menu cleared successfully' });
-  } catch (err) {
-    console.error('Error clearing menu:', err);
+  } catch (error) {
+    console.error('Error clearing menu:', error);
     res.status(500).json({ message: 'Failed to clear menu' });
   }
 });
 
-// Get all settings
-router.get('/settings', (req, res) => {
+router.get('/settings', async (req, res) => {
   try {
-    const settings = db.getAllSettings();
-    res.json(settings);
-  } catch (err) {
-    console.error('Error getting settings:', err);
+    res.json(await db.getAllSettings());
+  } catch (error) {
+    console.error('Error getting settings:', error);
     res.status(500).json({ message: 'Failed to load settings' });
   }
 });
 
-// Update a setting
-router.patch('/settings/:key', (req, res) => {
+router.patch('/settings/:key', async (req, res) => {
   try {
-    const { key } = req.params;
-
-    // Validate setting value
     const validation = validateSettingValue(req.body);
     if (!validation.success) {
       return res.status(400).json({ message: 'Invalid setting value', errors: validation.errors });
     }
-
-    const { value } = validation.data;
-    const sanitizedValue = sanitizeText(value, 500);
-
-    db.setSetting(key, sanitizedValue);
-    res.json({ message: 'Setting updated', key, value: sanitizedValue });
-  } catch (err) {
-    console.error('Error updating setting:', err);
-    res.status(500).json({ message: 'Failed to update setting' });
+    const value = sanitizeText(validation.data.value, 500);
+    await db.setSetting(req.params.key, value);
+    return res.json({ message: 'Setting updated', key: req.params.key, value });
+  } catch (error) {
+    console.error('Error updating setting:', error);
+    return res.status(500).json({ message: 'Failed to update setting' });
   }
 });
 
-// ============ Database Backup Management ============
-
-// Get backup info
 router.get('/backup/info', (req, res) => {
+  res.json({
+    provider: 'supabase',
+    managed: true,
+    message: 'Backups and point-in-time recovery are managed in the Supabase dashboard.',
+  });
+});
+
+router.get('/backups', (req, res) => res.json({ backups: [], managed: true, provider: 'supabase' }));
+
+const managedBackupResponse = (req, res) => res.status(409).json({
+  message: 'Database backups are managed by Supabase and cannot be changed from this application.',
+  code: 'MANAGED_BACKUPS',
+});
+
+router.post('/backup', managedBackupResponse);
+router.post('/backup/:filename/restore', managedBackupResponse);
+router.delete('/backup/:filename', managedBackupResponse);
+router.delete('/backups/cleanup', managedBackupResponse);
+
+router.get('/partner-menu/imports', async (req, res) => {
   try {
-    const info = getBackupInfo();
-    res.json(info);
-  } catch (err) {
-    console.error('Error getting backup info:', err);
-    res.status(500).json({ message: 'Failed to get backup info' });
+    return res.json(await db.listPartnerMenuImports(req.query.limit));
+  } catch (error) {
+    console.error('Failed to load partner menu imports:', error);
+    return res.status(500).json({ message: 'Failed to load partner menu imports' });
   }
 });
 
-// List all backups
-router.get('/backups', (req, res) => {
+router.get('/partner-menu/imports/:id/candidates', async (req, res) => {
   try {
-    const backups = listBackups();
-    res.json({ backups });
-  } catch (err) {
-    console.error('Error listing backups:', err);
-    res.status(500).json({ message: 'Failed to list backups' });
+    return res.json(await db.getPartnerMenuImportCandidates(req.params.id));
+  } catch (error) {
+    console.error('Failed to load partner menu candidates:', error);
+    return res.status(500).json({ message: 'Failed to load partner menu candidates' });
   }
 });
 
-// Create a new backup
-router.post('/backup', async (req, res) => {
+router.post('/partner-menu/imports/refresh', async (req, res) => {
   try {
-    const result = await createBackup();
-    return res.status(201).json(result);
-  } catch (err) {
-    console.error('Error creating backup:', err);
-    res.status(500).json({ message: 'Failed to create backup' });
+    return res.status(202).json(await importPartnerMenu());
+  } catch (error) {
+    console.error('Manual partner menu import failed:', error);
+    return res.status(500).json({ message: 'Partner menu import failed' });
   }
 });
 
-// Restore from a backup
-router.post('/backup/:filename/restore', async (req, res) => {
+router.post('/partner-menu/imports/:id/publish', async (req, res) => {
   try {
-    const { filename } = req.params;
-    const result = await restoreBackup(filename);
+    const result = await db.publishPartnerMenuImport(req.params.id);
+    if (!result.ok) {
+      return res.status(result.code === 'not_found' ? 404 : 409).json({
+        message: result.message,
+        code: result.code,
+      });
+    }
     return res.json(result);
-  } catch (err) {
-    console.error('Error restoring backup:', err);
-    // Return 404 for not found errors
-    if (err.message === 'Backup file not found') {
-      return res.status(404).json({ message: 'Backup not found' });
-    }
-    res.status(500).json({ message: err.message || 'Failed to restore backup' });
-  }
-});
-
-// Delete a specific backup
-router.delete('/backup/:filename', (req, res) => {
-  try {
-    const { filename } = req.params;
-    const result = deleteBackup(filename);
-    res.json(result);
-  } catch (err) {
-    console.error('Error deleting backup:', err);
-    // Return 404 for not found errors
-    if (err.message === 'Backup file not found') {
-      return res.status(404).json({ message: 'Backup not found' });
-    }
-    res.status(500).json({ message: err.message || 'Failed to delete backup' });
-  }
-});
-
-// Clean up old backups (older than 7 days)
-router.delete('/backups/cleanup', (req, res) => {
-  try {
-    const days = parseInt(req.query.days) || 7;
-    const result = deleteOldBackups(days);
-    res.json(result);
-  } catch (err) {
-    console.error('Error cleaning up backups:', err);
-    res.status(500).json({ message: 'Failed to clean up backups' });
+  } catch (error) {
+    console.error('Failed to publish partner menu import:', error);
+    return res.status(500).json({ message: 'Failed to publish partner menu import' });
   }
 });
 

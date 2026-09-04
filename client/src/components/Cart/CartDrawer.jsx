@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useCart } from '../../context/CartContext';
 import { formatPriceFromDollars } from '../../utils/formatters';
 
-export default function CartDrawer({ isOpen, onClose }) {
+export default function CartDrawer({ isOpen, onClose, cartPath = '/cafe/cart' }) {
   const navigate = useNavigate();
   const { items, cartTotal, updateQuantity, removeItem, getItemTotal } = useCart();
 
@@ -75,7 +75,7 @@ export default function CartDrawer({ isOpen, onClose }) {
               <span className="text-xl font-bold text-muze-dark">{formatPriceFromDollars(cartTotal)}</span>
             </div>
             <button
-              onClick={() => { onClose(); navigate('/cart'); }}
+              onClick={() => { onClose(); navigate(cartPath); }}
               className="w-full py-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-base hover:bg-muze-brown hover:text-white transition-colors shadow-md"
             >
               Review &amp; Checkout
