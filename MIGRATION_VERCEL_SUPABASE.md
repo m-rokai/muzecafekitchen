@@ -75,6 +75,44 @@ Create staff accounts through `npm run staff:create`. The script writes `staff`
 or `admin` only to protected `app_metadata`; authorization never trusts editable
 user metadata.
 
+### Muze Office administrator domain
+
+After applying `20260909234424_muzeoffice_domain_admin.sql`, confirmed,
+non-anonymous accounts whose email domain is exactly `muzeoffice.com` receive
+`app_metadata.role = admin` automatically. Matching is case-insensitive;
+subdomains, lookalike domains, unconfirmed addresses, and editable user metadata
+do not qualify. Keep Supabase email confirmations enabled (`mailer_autoconfirm`
+must remain false).
+
+The Auth row trigger runs on account creation and changes to the email,
+confirmation state, anonymous status, or protected metadata. It also reconciles
+existing matching accounts during migration. If eligibility is lost, it removes
+the automatic grant and restores any independently assigned base role. Provider
+metadata is preserved. The trigger uses invoker permissions and is not exposed
+as a client RPC.
+
+This policy uses the roles already consumed by the admin UI, Express API, database
+policies, and private kitchen Broadcast. Sign in again or refresh the session
+after a role change so JWT-based database/Realtime checks receive the new claim;
+the Express API checks the current Auth user on each request.
+
+Each person still needs a café Auth account and password. This rule does not
+create accounts or send invitations. The existing trusted `staff:create` script
+creates an already-confirmed account, so use it only after verifying the intended
+account owner. Self-service registration and password recovery screens are not
+part of this change.
+
+Applied to the live `muzecafe` project on September 9, 2026. All 23 database
+regressions passed after application, the trigger has no client EXECUTE grant,
+and no synthetic accounts remained. There were no existing Muze Office accounts
+to promote. The hosted Auth settings confirmed `mailer_autoconfirm = false`.
+
+`supabase/tests/domain-admin.sql` checks domain matching, confirmation,
+anonymous conversion, metadata spoofing, automatic revocation, role preservation,
+and trigger privileges. Run it with `psql -v ON_ERROR_STOP=1 -f` against a database
+with the migration installed. It creates only synthetic rows inside a transaction
+that is rolled back and does not send emails or exercise a real Auth sign-in.
+
 ## Vercel setup
 
 Import the GitHub repository as a Vercel project and keep the repository root as

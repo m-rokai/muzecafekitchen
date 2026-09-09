@@ -16,4 +16,4 @@ const { data, error } = await getSupabaseAdminClient().auth.admin.createUser({
 });
 
 if (error) throw error;
-console.log(`Created ${role} user ${data.user.email} (${data.user.id}).`);
+console.log(`Created user ${data.user.email} (${data.user.id}) with base role ${role}. Verified @muzeoffice.com accounts receive admin access automatically.`);
