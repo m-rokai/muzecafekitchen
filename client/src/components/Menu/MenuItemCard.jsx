@@ -3,7 +3,6 @@ import { Plus } from 'lucide-react';
 import { formatPriceFromDollars } from '../../utils/formatters';
 import { useCart } from '../../context/CartContext';
 import { getCategoryStyle } from './categoryIcons';
-import PossibleAllergens from './PossibleAllergens';
 
 export default function MenuItemCard({ item, onClick, index = 0, disabled = false }) {
   const { addItem } = useCart();
@@ -29,7 +28,6 @@ export default function MenuItemCard({ item, onClick, index = 0, disabled = fals
       id: item.id,
       name: item.name,
       price: item.price,
-      menu_week: item.menu_week || null,
       quantity: 1,
       modifiers: [],
       specialInstructions: '',
@@ -65,7 +63,7 @@ export default function MenuItemCard({ item, onClick, index = 0, disabled = fals
         {unavailable && (
           <span className="absolute inset-0 bg-black/20 flex items-center justify-center">
             <span className="px-3 py-1 rounded-full bg-white/90 text-muze-dark text-xs font-semibold uppercase tracking-wider">
-              {disabled ? 'Pre-orders closed' : 'Unavailable'}
+              Unavailable
             </span>
           </span>
         )}
@@ -77,18 +75,12 @@ export default function MenuItemCard({ item, onClick, index = 0, disabled = fals
         {item.description && (
           <p className="text-sm text-muze-dark/60 mt-1 line-clamp-2">{item.description}</p>
         )}
-        {item.channel === 'partner_meal' ? (
-          <PossibleAllergens allergens={item.possible_allergens} compact />
-        ) : null}
 
         <div className="mt-auto pt-3 flex items-center justify-between">
           <div>
             <p className="text-xl font-bold text-muze-brown">
               {formatPriceFromDollars(item.price)}
             </p>
-            {item.channel === 'partner_meal' ? (
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-muze-dark/50">Tax included</p>
-            ) : null}
           </div>
           <button
             type="button"

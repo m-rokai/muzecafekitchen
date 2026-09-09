@@ -4,7 +4,6 @@ import { menuAPI } from '../../utils/api';
 import { useCart } from '../../context/CartContext';
 import { formatPriceFromDollars } from '../../utils/formatters';
 import { getCategoryStyle } from './categoryIcons';
-import PossibleAllergens from './PossibleAllergens';
 
 export default function ItemModal({ item, onClose }) {
   const { addItem } = useCart();
@@ -59,7 +58,6 @@ export default function ItemModal({ item, onClose }) {
       id: item.id,
       name: item.name,
       price: item.price,
-      menu_week: item.menu_week || null,
       quantity,
       modifiers: selectedModifiers,
       specialInstructions: specialInstructions.trim(),
@@ -99,15 +97,9 @@ export default function ItemModal({ item, onClose }) {
           {item.description && (
             <p className="text-muze-dark/70 mt-2 text-base leading-relaxed">{item.description}</p>
           )}
-          {item.channel === 'partner_meal' ? (
-            <PossibleAllergens allergens={item.possible_allergens} />
-          ) : null}
           <p className="text-2xl font-bold text-muze-brown mt-3">
             {formatPriceFromDollars(item.price)}
           </p>
-          {item.channel === 'partner_meal' ? (
-            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-muze-dark/50">Nevada sales tax included</p>
-          ) : null}
 
           {!loading && modifierGroups.length > 0 && (
             <div className="mt-7 space-y-7">

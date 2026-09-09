@@ -8,6 +8,7 @@ import {
   requireCustomerIdentity,
 } from '../middleware/auth.js';
 import { orderRateLimit } from '../middleware/rateLimit.js';
+import { requireCafeQuery, rejectRetiredStorefront } from '../middleware/storefront.js';
 import { validateOrderCreation, validateOrderStatus } from '../validators/schemas.js';
 import { sanitizeOrderData, sanitizeText } from '../utils/sanitize.js';
 import {
@@ -70,7 +71,7 @@ async function requireCustomerOrStaff(req, res, next) {
 
 // Create an order. Identity, idempotency, product availability, modifier
 // cardinality, and all money values are server-authoritative.
-router.post('/', orderRateLimit, requireCustomerIdentity, async (req, res) => {
+router.post('/', rejectRetiredStorefront, orderRateLimit, requireCustomerIdentity, async (req, res) => {
   try {
     if (await db.getSetting('kitchen_open') === 'false') {
       const message = await db.getSetting('kitchen_closed_message')
@@ -155,9 +156,6 @@ router.post('/', orderRateLimit, requireCustomerIdentity, async (req, res) => {
         items: pricing.items,
         actorSubject: req.customerIdentity.subject,
         channel: sanitized.channel,
-        partnerId: pricing.partnerId,
-        preorderDeadline: pricing.partnerOrderDeadline,
-        preorderDeliveryDate: pricing.partnerDeliveryDate,
         paymentStatus: 'pending',
         paymentMethod: provider,
         paymentProvider: provider,
@@ -292,13 +290,9 @@ router.patch('/kitchen-status', requireAuth, async (req, res) => {
 });
 
 // Active orders are a staff-only HTTP surface.
-router.get('/active', requireAuth, async (req, res) => {
+router.get('/active', requireAuth, requireCafeQuery, async (req, res) => {
   try {
-    const channel = req.query.channel || 'cafe';
-    if (!['cafe', 'partner_meal'].includes(channel)) {
-      return res.status(400).json({ message: 'Invalid storefront channel' });
-    }
-    return res.json(await db.getActiveOrders(channel));
+    return res.json(await db.getActiveOrders('cafe'));
   } catch (err) {
     console.error('Error getting active orders:', err);
     return res.status(500).json({ message: 'Failed to load orders' });

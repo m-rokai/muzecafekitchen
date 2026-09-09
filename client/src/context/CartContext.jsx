@@ -89,8 +89,9 @@ function loadStoredCart(storageKey) {
   }
 }
 
-export function CartProvider({ children, channel = 'cafe' }) {
-  const storageKey = `muze_cart_${channel}`;
+export function CartProvider({ children }) {
+  const channel = 'cafe';
+  const storageKey = 'muze_cart_cafe';
   const [state, dispatch] = useReducer(cartReducer, storageKey, loadStoredCart);
 
   useEffect(() => {
@@ -101,7 +102,7 @@ export function CartProvider({ children, channel = 'cafe' }) {
     }
   }, [channel, state.items, storageKey]);
 
-  // Save this storefront's cart independently.
+  // Keep the existing café storage key so saved carts survive the portal removal.
   useEffect(() => {
     try {
       localStorage.setItem(storageKey, JSON.stringify(state));

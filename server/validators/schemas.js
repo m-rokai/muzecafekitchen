@@ -18,7 +18,7 @@ const OrderItemSchema = z.object({
 const OrderCreationSchema = z.object({
   customerName: z.string().min(1, 'Customer name is required').max(100),
   email: z.string().trim().email('A valid email is required').max(254),
-  channel: z.enum(['cafe', 'partner_meal']),
+  channel: z.literal('cafe'),
   paymentSourceToken: z.string().min(1).max(2048).optional(),
   items: z.array(OrderItemSchema).min(1, 'Order must have at least one item').max(50),
   notes: z.string().max(500).optional(),

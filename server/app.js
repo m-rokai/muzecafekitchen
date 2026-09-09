@@ -7,7 +7,6 @@ import adminRoutes from './routes/admin.js';
 import webhookRoutes from './routes/webhooks.js';
 import { checkDatabaseIntegrity } from './db/database.js';
 import { processPickupReminders } from './services/pickupReminder.js';
-import { importPartnerMenu } from './services/partnerMenuImport.js';
 import { isEmailConfigured } from './services/email.js';
 import { paymentActivationStatus } from './services/payments.js';
 
@@ -66,7 +65,6 @@ app.get('/api/health', async (req, res) => {
       features: {
         email: { configured: isEmailConfigured() },
         payments: paymentActivationStatus(),
-        partnerMenuImport: { configured: Boolean(process.env.PARTNER_MENU_URL?.trim()) },
       },
       timestamp: new Date().toISOString(),
     });
@@ -86,19 +84,6 @@ app.get('/api/cron/pickup-reminders', async (req, res) => {
   } catch (error) {
     console.error('Pickup reminder cron failed:', error);
     return res.status(500).json({ message: 'Pickup reminder processing failed' });
-  }
-});
-
-app.get('/api/cron/partner-menu', async (req, res) => {
-  const secret = process.env.CRON_SECRET;
-  if (!secret || req.get('Authorization') !== `Bearer ${secret}`) {
-    return res.status(401).json({ message: 'Unauthorized' });
-  }
-  try {
-    return res.json(await importPartnerMenu());
-  } catch (error) {
-    console.error('Partner menu import failed:', error);
-    return res.status(500).json({ message: 'Partner menu import failed' });
   }
 });
 

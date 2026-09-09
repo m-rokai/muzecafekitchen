@@ -50,7 +50,6 @@ export default function AdminPage() {
   const adminTabs = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'items', label: 'Menu Items', icon: Package },
-    { id: 'partner', label: 'Partner Menu', icon: Calendar },
     { id: 'categories', label: 'Categories', icon: FolderOpen },
     { id: 'modifiers', label: 'Modifiers', icon: Sliders },
     { id: 'orders', label: 'Orders', icon: Receipt },
@@ -234,7 +233,6 @@ export default function AdminPage() {
             loading={loading}
           />
         )}
-        {activeTab === 'partner' && <PartnerMenuSection />}
         {activeTab === 'categories' && (
           <CategoriesSection
             categories={categories}
@@ -280,8 +278,7 @@ function OverviewSection({
   const [savingStatus, setSavingStatus] = useState(false);
   const [statusError, setStatusError] = useState(null);
   const kitchenOpen = settings.kitchen_open !== 'false';
-  const cafeItems = items.filter(item => item.channel !== 'partner_meal');
-  const partnerItems = items.filter(item => item.channel === 'partner_meal');
+  const cafeItems = items;
   const unavailableItems = cafeItems.filter(item => !item.available);
   const uncategorizedItems = cafeItems.filter(item => !item.category_id);
   const missingImages = cafeItems.filter(item => !item.image_url);
@@ -331,7 +328,7 @@ function OverviewSection({
         <OverviewMetric icon={ShoppingBag} label="Today's orders" value={stats.orders || 0} />
         <OverviewMetric icon={DollarSign} label="Today's revenue" value={formatPriceFromDollars(stats.revenue || 0)} />
         <OverviewMetric icon={Coffee} label="Café items" value={cafeItems.length} />
-        <OverviewMetric icon={Calendar} label="Partner meals" value={partnerItems.filter(item => item.available).length} />
+        <OverviewMetric icon={Coffee} label="Available items" value={cafeItems.length - unavailableItems.length} />
       </div>
 
       <div className="grid gap-5 lg:grid-cols-3">
@@ -410,7 +407,7 @@ function OverviewSection({
           <h3 className="font-bold text-gray-950">Quick actions</h3>
           <div className="mt-4 grid grid-cols-2 gap-2">
             <button onClick={() => onNavigate('orders')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Review orders</button>
-            <button onClick={() => onNavigate('partner')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Partner menu</button>
+            <button onClick={() => onNavigate('items')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Edit café menu</button>
             <button onClick={() => onNavigate('categories')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Edit categories</button>
             <Link to="/kitchen" className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Kitchen display</Link>
           </div>
@@ -921,208 +918,6 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
           </div>
         </form>
       </div>
-    </div>
-  );
-}
-
-// ============ Partner Menu Section ============
-function PartnerMenuSection() {
-  const [imports, setImports] = useState([]);
-  const [selectedRun, setSelectedRun] = useState(null);
-  const [candidates, setCandidates] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [working, setWorking] = useState(false);
-  const [message, setMessage] = useState(null);
-  const [error, setError] = useState(null);
-
-  const loadImports = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setImports(await adminAPI.getPartnerMenuImports() || []);
-    } catch (err) {
-      setError(err.message || 'Could not load partner menu history.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(loadImports, 0);
-    return () => clearTimeout(timer);
-  }, [loadImports]);
-
-  async function refreshMenu() {
-    setWorking(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const result = await adminAPI.refreshPartnerMenu();
-      if (result.status === 'disabled') {
-        setMessage(result.reason || 'The partner source is not configured yet.');
-      } else {
-        setMessage(`Imported ${result.candidateCount || 0} menu candidates for review.`);
-        await loadImports();
-      }
-    } catch (err) {
-      setError(err.message || 'Partner menu refresh failed.');
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  async function reviewRun(run) {
-    setSelectedRun(run);
-    setCandidates([]);
-    setError(null);
-    try {
-      setCandidates(await adminAPI.getPartnerMenuCandidates(run.id) || []);
-    } catch (err) {
-      setError(err.message || 'Could not load the imported menu.');
-    }
-  }
-
-  async function publishRun(run) {
-    if (!confirm(`Publish ${run.candidate_count || 0} weekly pre-order meals to the customer menu?`)) return;
-    setWorking(true);
-    setError(null);
-    setMessage(null);
-    try {
-      await adminAPI.publishPartnerMenuImport(run.id);
-      setMessage('Partner menu published successfully.');
-      setSelectedRun(null);
-      setCandidates([]);
-      await loadImports();
-    } catch (err) {
-      setError(err.message || 'Could not publish this partner menu.');
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  function formatImportDate(value) {
-    if (!value) return '—';
-    return new Date(value).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  }
-
-  const statusStyle = {
-      staged: 'bg-amber-100 text-amber-800',
-    published: 'bg-green-100 text-green-800',
-    failed: 'bg-red-100 text-red-800',
-    running: 'bg-blue-100 text-blue-800',
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.16em] text-muze-brown">Weekly meal pre-orders</p>
-          <h2 className="mt-1 text-2xl font-bold text-gray-950">Partner menu imports</h2>
-          <p className="mt-1 max-w-2xl text-sm text-gray-600">
-            Pull Down to Earth Cuisine’s weekly menu, inspect the balanced six-meal $19 selection, then publish it to the customer menu.
-          </p>
-        </div>
-        <button onClick={refreshMenu} disabled={working} className="btn btn-primary flex items-center justify-center gap-2">
-          <RefreshCw className={`h-4 w-4 ${working ? 'animate-spin' : ''}`} />
-          Refresh source
-        </button>
-      </div>
-
-      {message && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">{message}</div>
-      )}
-      {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>
-      )}
-
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-        <h3 className="font-semibold text-amber-950">Review before publishing</h3>
-        <p className="mt-1 text-sm text-amber-800">
-          Three eligible chicken/beef dishes and three vegetarian dishes are staged; fish, seafood, and pork are denied. The live menu changes only after an administrator publishes the import.
-        </p>
-      </div>
-
-      <section className="card overflow-hidden">
-        <div className="border-b border-gray-100 px-4 py-3 sm:px-5">
-          <h3 className="font-bold text-gray-950">Import history</h3>
-        </div>
-        {loading ? (
-          <div className="flex justify-center py-12"><RefreshCw className="h-6 w-6 animate-spin text-muze-gold" /></div>
-        ) : imports.length === 0 ? (
-          <div className="px-5 py-12 text-center">
-            <Calendar className="mx-auto h-10 w-10 text-gray-300" />
-            <h3 className="mt-3 font-semibold text-gray-800">No imports yet</h3>
-            <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
-              Once the partner URL and allowlisted host are configured, use Refresh source to create the first reviewable menu.
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-100">
-            {imports.map(run => (
-              <div key={run.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-semibold text-gray-950">{run.partner_name}</p>
-                    <span className={`rounded-full px-2 py-1 text-xs font-semibold capitalize ${statusStyle[run.status] || 'bg-gray-100 text-gray-700'}`}>
-                      {run.status}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm text-gray-500">
-                    {formatImportDate(run.started_at)} · {run.candidate_count || 0} candidates
-                  </p>
-                  {run.error_message && <p className="mt-1 text-sm text-red-600">{run.error_message}</p>}
-                </div>
-                <div className="flex gap-2">
-                  {['staged', 'published'].includes(run.status) && (
-                    <button onClick={() => reviewRun(run)} className="btn btn-secondary flex-1 sm:flex-none">Review</button>
-                  )}
-                  {run.status === 'staged' && (
-                    <button onClick={() => publishRun(run)} disabled={working} className="btn btn-primary flex-1 sm:flex-none">Publish</button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {selectedRun && (
-        <section className="card overflow-hidden">
-          <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 sm:px-5">
-            <div>
-              <h3 className="font-bold text-gray-950">{selectedRun.partner_name} candidates</h3>
-              <p className="text-xs text-gray-500">Verify naming, pricing, and images before publishing.</p>
-            </div>
-            <button onClick={() => setSelectedRun(null)} className="flex h-9 w-9 items-center justify-center rounded-lg hover:bg-gray-100" aria-label="Close candidate review">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3">
-            {candidates.map(candidate => (
-              <article key={candidate.id} className="rounded-xl border border-gray-200 p-4">
-                <div className="flex gap-3">
-                  {candidate.image_url ? (
-                    <img src={candidate.image_url} alt="" className="h-14 w-14 flex-shrink-0 rounded-lg object-cover" />
-                  ) : (
-                    <span className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-lg bg-gray-100"><ImageIcon className="h-5 w-5 text-gray-400" /></span>
-                  )}
-                  <div className="min-w-0">
-                    <h4 className="font-semibold leading-tight text-gray-950">{candidate.name}</h4>
-                    <p className="mt-1 font-bold text-muze-brown">{formatPriceFromDollars((candidate.price_cents || 0) / 100)}</p>
-                  </div>
-                </div>
-                {candidate.description && <p className="mt-3 line-clamp-3 text-sm text-gray-600">{candidate.description}</p>}
-              </article>
-            ))}
-            {candidates.length === 0 && <p className="col-span-full py-6 text-center text-sm text-gray-500">No candidates were found for this import.</p>}
-          </div>
-        </section>
-      )}
     </div>
   );
 }
@@ -2320,7 +2115,7 @@ function SettingsSection({ settings, onUpdate }) {
           Café Tax Rate
         </h2>
         <p className="text-gray-600 text-sm mb-4">
-          Set the sales tax rate applied to café orders. Partner-meal tax is tracked separately.
+          Set the sales tax rate applied to café orders.
         </p>
 
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
@@ -2372,14 +2167,6 @@ function SettingsSection({ settings, onUpdate }) {
             <span className="text-red-800 text-sm">{error}</span>
           </div>
         )}
-      </div>
-
-      <div className="card p-6 bg-blue-50 border-blue-200">
-        <h3 className="font-semibold text-blue-900 mb-2">Partner-meal tax: 8.375%</h3>
-        <p className="text-blue-800 text-sm">
-          Partner meals use the Clark County rate for pickup at Muze’s Las Vegas location.
-          Café tax is added at checkout. Partner-meal tax is backed out of the flat listed price so the customer total does not increase.
-        </p>
       </div>
 
       <div className="card p-6">

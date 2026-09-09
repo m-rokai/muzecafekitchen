@@ -12,7 +12,6 @@ import HeroSection from '../components/Menu/HeroSection';
 import PartnerCardsSection from '../components/Menu/PartnerCardsSection';
 import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
-import PortalHomeLink from '../components/PortalHomeLink';
 
 export default function MenuPage({ basePath = '/cafe' }) {
   const navigate = useNavigate();
@@ -92,8 +91,8 @@ export default function MenuPage({ basePath = '/cafe' }) {
     try {
       setLoading(true);
       const [categoriesData, itemsData] = await Promise.all([
-        menuAPI.getCategories('cafe'),
-        menuAPI.getItems('cafe'),
+        menuAPI.getCategories(),
+        menuAPI.getItems(),
       ]);
       setCategories(categoriesData || []);
       setMenuItems(itemsData || []);
@@ -143,12 +142,6 @@ export default function MenuPage({ basePath = '/cafe' }) {
   return (
     <div className="min-h-screen pb-32 relative">
       <GradientMesh />
-
-      <header className="relative z-20 px-4 pt-3">
-        <div className="mx-auto max-w-5xl">
-          <PortalHomeLink />
-        </div>
-      </header>
 
       {/* Active Order Banner — kept lightweight, sits above the hero */}
       {activeOrder && (

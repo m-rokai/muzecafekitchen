@@ -1,24 +1,14 @@
 import express from 'express';
 import * as db from '../db/database.js';
+import { requireCafeQuery } from '../middleware/storefront.js';
 
 const router = express.Router();
-const CHANNELS = new Set(['cafe', 'partner_meal']);
-
-function requestedChannel(req, res) {
-  const channel = req.query.channel || 'cafe';
-  if (!CHANNELS.has(channel)) {
-    res.status(400).json({ message: 'Invalid storefront channel' });
-    return null;
-  }
-  return channel;
-}
+router.use(requireCafeQuery);
 
 // Get all categories
 router.get('/categories', async (req, res) => {
   try {
-    const channel = requestedChannel(req, res);
-    if (!channel) return;
-    const categories = await db.getAllCategories(channel);
+    const categories = await db.getAllCategories('cafe');
     res.json(categories);
   } catch (err) {
     console.error('Error getting categories:', err);
@@ -29,9 +19,7 @@ router.get('/categories', async (req, res) => {
 // Get all menu items
 router.get('/items', async (req, res) => {
   try {
-    const channel = requestedChannel(req, res);
-    if (!channel) return;
-    const items = await db.getAllMenuItems(channel);
+    const items = await db.getAllMenuItems('cafe');
     res.json(items);
   } catch (err) {
     console.error('Error getting items:', err);
@@ -42,9 +30,7 @@ router.get('/items', async (req, res) => {
 // Get items by category
 router.get('/categories/:id/items', async (req, res) => {
   try {
-    const channel = requestedChannel(req, res);
-    if (!channel) return;
-    const items = await db.getMenuItemsByCategory(parseInt(req.params.id), channel);
+    const items = await db.getMenuItemsByCategory(parseInt(req.params.id), 'cafe');
     res.json(items);
   } catch (err) {
     console.error('Error getting items by category:', err);
@@ -56,7 +42,7 @@ router.get('/categories/:id/items', async (req, res) => {
 router.get('/items/:id', async (req, res) => {
   try {
     const item = await db.getMenuItem(parseInt(req.params.id));
-    if (!item) {
+    if (!item || item.channel !== 'cafe') {
       return res.status(404).json({ message: 'Item not found' });
     }
     res.json(item);
@@ -69,6 +55,10 @@ router.get('/items/:id', async (req, res) => {
 // Get modifiers for an item
 router.get('/items/:id/modifiers', async (req, res) => {
   try {
+    const item = await db.getMenuItem(parseInt(req.params.id));
+    if (!item || item.channel !== 'cafe') {
+      return res.status(404).json({ message: 'Item not found' });
+    }
     const groups = await db.getModifiersForItem(parseInt(req.params.id));
     res.json(groups);
   } catch (err) {

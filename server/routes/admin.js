@@ -4,6 +4,7 @@ import multer from 'multer';
 import * as db from '../db/database.js';
 import { requireAdmin, requireAuth } from '../middleware/auth.js';
 import { adminRateLimit } from '../middleware/rateLimit.js';
+import { requireCafeQuery } from '../middleware/storefront.js';
 import { getSupabaseAdminClient } from '../lib/supabase.js';
 import {
   validateCategory,
@@ -11,7 +12,6 @@ import {
   validateSettingValue,
 } from '../validators/schemas.js';
 import { sanitizeText, sanitizeMenuItemName } from '../utils/sanitize.js';
-import { importPartnerMenu } from '../services/partnerMenuImport.js';
 
 const router = express.Router();
 const MENU_BUCKET = 'menu-images';
@@ -55,12 +55,9 @@ router.get('/verify-token', requireAuth, (req, res) => {
   res.json({ valid: true, auth: req.auth });
 });
 
-router.get('/public/settings', async (req, res) => {
+router.get('/public/settings', requireCafeQuery, async (req, res) => {
   try {
-    const channel = req.query.channel === 'partner_meal' ? 'partner_meal' : 'cafe';
-    const settingKey = channel === 'partner_meal' ? 'partner_tax_rate' : 'tax_rate';
-    const fallback = channel === 'partner_meal' ? '0.08375' : '0.0825';
-    res.json({ channel, tax_rate: await db.getSetting(settingKey) || fallback });
+    res.json({ channel: 'cafe', tax_rate: await db.getSetting('tax_rate') || '0.0825' });
   } catch (error) {
     console.error('Error getting public settings:', error);
     res.status(500).json({ message: 'Failed to load settings' });
@@ -101,7 +98,7 @@ router.get('/public/popular-items', async (req, res) => {
     }
     const ids = values.map(value => Number(value)).filter(Number.isSafeInteger);
     const items = await Promise.all(ids.map(id => db.getMenuItem(id)));
-    res.json(items.filter(item => item?.available));
+    res.json(items.filter(item => item?.available && item.channel === 'cafe'));
   } catch (error) {
     console.error('Error getting popular items:', error);
     res.status(500).json({ message: 'Failed to load popular items' });
@@ -111,6 +108,32 @@ router.get('/public/popular-items', async (req, res) => {
 router.use(requireAuth);
 router.use(adminRateLimit);
 router.use(requireAdmin);
+
+// Retired catalog entries remain in storage for history, but cannot be edited
+// or made available through the café's admin catalog.
+router.use('/items/:id', async (req, res, next) => {
+  try {
+    const item = await db.getMenuItem(Number.parseInt(req.params.id, 10));
+    if (!item || item.channel !== 'cafe') {
+      return res.status(404).json({ message: 'Item not found' });
+    }
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.use('/categories/:id', async (req, res, next) => {
+  try {
+    const category = await db.getCategory(Number.parseInt(req.params.id, 10));
+    if (!category || category.channel !== 'cafe') {
+      return res.status(404).json({ message: 'Category not found' });
+    }
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.post('/upload', upload.single('image'), async (req, res) => {
   try {
@@ -194,7 +217,7 @@ router.get('/orders/:id', async (req, res) => {
 
 router.get('/categories', async (req, res) => {
   try {
-    res.json(await db.getAllCategories());
+    res.json(await db.getAllCategories('cafe'));
   } catch (error) {
     console.error('Error getting categories:', error);
     res.status(500).json({ message: 'Failed to load categories' });
@@ -257,7 +280,7 @@ router.delete('/categories/:id', async (req, res) => {
 
 router.get('/items', async (req, res) => {
   try {
-    res.json(await db.getAllMenuItemsIncludingUnavailable());
+    res.json((await db.getAllMenuItemsIncludingUnavailable()).filter(item => item.channel === 'cafe'));
   } catch (error) {
     console.error('Error getting items:', error);
     res.status(500).json({ message: 'Failed to load items' });
@@ -506,48 +529,5 @@ router.post('/backup', managedBackupResponse);
 router.post('/backup/:filename/restore', managedBackupResponse);
 router.delete('/backup/:filename', managedBackupResponse);
 router.delete('/backups/cleanup', managedBackupResponse);
-
-router.get('/partner-menu/imports', async (req, res) => {
-  try {
-    return res.json(await db.listPartnerMenuImports(req.query.limit));
-  } catch (error) {
-    console.error('Failed to load partner menu imports:', error);
-    return res.status(500).json({ message: 'Failed to load partner menu imports' });
-  }
-});
-
-router.get('/partner-menu/imports/:id/candidates', async (req, res) => {
-  try {
-    return res.json(await db.getPartnerMenuImportCandidates(req.params.id));
-  } catch (error) {
-    console.error('Failed to load partner menu candidates:', error);
-    return res.status(500).json({ message: 'Failed to load partner menu candidates' });
-  }
-});
-
-router.post('/partner-menu/imports/refresh', async (req, res) => {
-  try {
-    return res.status(202).json(await importPartnerMenu());
-  } catch (error) {
-    console.error('Manual partner menu import failed:', error);
-    return res.status(500).json({ message: 'Partner menu import failed' });
-  }
-});
-
-router.post('/partner-menu/imports/:id/publish', async (req, res) => {
-  try {
-    const result = await db.publishPartnerMenuImport(req.params.id);
-    if (!result.ok) {
-      return res.status(result.code === 'not_found' ? 404 : 409).json({
-        message: result.message,
-        code: result.code,
-      });
-    }
-    return res.json(result);
-  } catch (error) {
-    console.error('Failed to publish partner menu import:', error);
-    return res.status(500).json({ message: 'Failed to publish partner menu import' });
-  }
-});
 
 export default router;

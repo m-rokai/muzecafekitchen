@@ -91,9 +91,9 @@ async function customerRequest(endpoint, options = {}) {
 }
 
 export const menuAPI = {
-  getCategories: (channel = 'cafe') => request(`/menu/categories?channel=${encodeURIComponent(channel)}`),
-  getItems: (channel = 'cafe') => request(`/menu/items?channel=${encodeURIComponent(channel)}`),
-  getItemsByCategory: (categoryId, channel = 'cafe') => request(`/menu/categories/${categoryId}/items?channel=${encodeURIComponent(channel)}`),
+  getCategories: () => request('/menu/categories'),
+  getItems: () => request('/menu/items'),
+  getItemsByCategory: categoryId => request(`/menu/categories/${categoryId}/items`),
   getItem: id => request(`/menu/items/${id}`),
   getModifiers: itemId => request(`/menu/items/${itemId}/modifiers`),
   getAllModifiers: () => request('/menu/modifiers'),
@@ -113,7 +113,7 @@ export const orderAPI = {
     method: 'PATCH',
     body: { reason: reason || null },
   }),
-  getActive: (channel = 'cafe') => authRequest(`/orders/active?channel=${encodeURIComponent(channel)}`),
+  getActive: () => authRequest('/orders/active'),
   updateStatus: (id, status, reason) => authRequest(`/orders/${id}/status`, {
     method: 'PATCH',
     body: reason ? { status, reason } : { status },
@@ -126,7 +126,7 @@ export const orderAPI = {
 };
 
 export const settingsAPI = {
-  getTaxRate: (channel = 'cafe') => request(`/admin/public/settings?channel=${encodeURIComponent(channel)}`)
+  getTaxRate: () => request('/admin/public/settings')
     .then(value => Number.parseFloat(value?.tax_rate || '0.0825'))
     .catch(() => 0.0825),
   getAnnouncement: () => request('/admin/public/announcement')
@@ -200,10 +200,6 @@ export const adminAPI = {
     return authRequest(`/admin/orders/stats${query ? `?${query}` : ''}`);
   },
   getOrder: id => authRequest(`/admin/orders/${id}`),
-  getPartnerMenuImports: () => authRequest('/admin/partner-menu/imports'),
-  getPartnerMenuCandidates: id => authRequest(`/admin/partner-menu/imports/${id}/candidates`),
-  refreshPartnerMenu: () => authRequest('/admin/partner-menu/imports/refresh', { method: 'POST' }),
-  publishPartnerMenuImport: id => authRequest(`/admin/partner-menu/imports/${id}/publish`, { method: 'POST' }),
 };
 
 export default { menuAPI, orderAPI, adminAPI, settingsAPI };

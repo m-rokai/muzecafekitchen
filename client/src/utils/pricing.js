@@ -1,15 +1,11 @@
-export function calculateOrderTotals(listedTotal, taxRate, { taxIncluded = false } = {}) {
+export function calculateOrderTotals(listedTotal, taxRate) {
   const listedTotalCents = Math.max(0, Math.round(Number(listedTotal || 0) * 100));
   const normalizedRate = Number.isFinite(Number(taxRate)) && Number(taxRate) >= 0
     ? Number(taxRate)
     : 0;
-  const subtotalCents = taxIncluded
-    ? Math.round(listedTotalCents / (1 + normalizedRate))
-    : listedTotalCents;
-  const taxCents = taxIncluded
-    ? listedTotalCents - subtotalCents
-    : Math.round(subtotalCents * normalizedRate);
-  const totalCents = taxIncluded ? listedTotalCents : subtotalCents + taxCents;
+  const subtotalCents = listedTotalCents;
+  const taxCents = Math.round(subtotalCents * normalizedRate);
+  const totalCents = subtotalCents + taxCents;
 
   return {
     subtotal: subtotalCents / 100,

@@ -1,20 +1,17 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, User, Mail, AlertCircle, CalendarClock, Loader2, Lock } from 'lucide-react';
+import { ArrowLeft, User, Mail, AlertCircle, Loader2, Lock } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { orderAPI, settingsAPI } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
 import GradientMesh from '../components/glass/GradientMesh';
 import SquareCardField from '../components/SquareCardField';
 import PortalHomeLink from '../components/PortalHomeLink';
-import { getPartnerSchedule } from '../utils/partnerSchedule';
 import { calculateOrderTotals } from '../utils/pricing';
 
-export default function CheckoutPage({
-  basePath = '/cafe',
-  channel = 'cafe',
-  paymentProvider = 'Square',
-}) {
+export default function CheckoutPage() {
+  const basePath = '/cafe';
+  const channel = 'cafe';
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { items, cartTotal, customerName, setCustomerName, clearCart, getItemTotal } = useCart();
@@ -39,15 +36,11 @@ export default function CheckoutPage({
   }, []);
 
   useEffect(() => {
-    settingsAPI.getTaxRate(channel).then(rate => setTaxRate(rate)).catch(() => {});
+    settingsAPI.getTaxRate().then(rate => setTaxRate(rate)).catch(() => {});
     settingsAPI.getKitchenStatus().then(setKitchenStatus).catch(() => {});
-  }, [channel]);
+  }, []);
 
-  const taxIncluded = channel === 'partner_meal';
-  const { subtotal, tax, total } = calculateOrderTotals(cartTotal, taxRate, { taxIncluded });
-  const preorderSchedule = channel === 'partner_meal'
-    ? getPartnerSchedule(items[0]?.menu_week)
-    : null;
+  const { subtotal, tax, total } = calculateOrderTotals(cartTotal, taxRate);
 
   useEffect(() => {
     if (items.length === 0 && !orderSubmittedRef.current) {
@@ -69,12 +62,6 @@ export default function CheckoutPage({
       setLoading(false);
       return;
     }
-    if (preorderSchedule?.closed) {
-      setError('Weekly meal pre-orders closed Wednesday at 12:00 PM Pacific.');
-      setLoading(false);
-      return;
-    }
-
     try {
       if (!idempotencyKeyRef.current) {
         idempotencyKeyRef.current = typeof globalThis.crypto?.randomUUID === 'function'
@@ -100,18 +87,16 @@ export default function CheckoutPage({
         })),
       };
 
-      if (channel === 'cafe') {
-        if (!squareCardRef.current) throw new Error('Secure Square payment is not ready yet');
-        if (!squareTokenRef.current) {
-          const tokenResult = await squareCardRef.current.tokenize();
-          if (tokenResult.status !== 'OK' || !tokenResult.token) {
-            const detail = tokenResult.errors?.[0]?.detail;
-            throw new Error(detail || 'Please check your card details and try again');
-          }
-          squareTokenRef.current = tokenResult.token;
+      if (!squareCardRef.current) throw new Error('Secure Square payment is not ready yet');
+      if (!squareTokenRef.current) {
+        const tokenResult = await squareCardRef.current.tokenize();
+        if (tokenResult.status !== 'OK' || !tokenResult.token) {
+          const detail = tokenResult.errors?.[0]?.detail;
+          throw new Error(detail || 'Please check your card details and try again');
         }
-        orderData.paymentSourceToken = squareTokenRef.current;
+        squareTokenRef.current = tokenResult.token;
       }
+      orderData.paymentSourceToken = squareTokenRef.current;
 
       const result = await orderAPI.create(
         orderData,
@@ -126,10 +111,6 @@ export default function CheckoutPage({
         pickupNumber: result.pickup_number,
         timestamp: Date.now(),
       }));
-      if (result.checkout_url) {
-        window.location.assign(result.checkout_url);
-        return;
-      }
       clearCart();
       navigate(`/orders/${result.id}`, { replace: true });
     } catch (err) {
@@ -166,20 +147,6 @@ export default function CheckoutPage({
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6">
-        {preorderSchedule ? (
-          <div className={`mb-6 rounded-2xl border p-5 ${preorderSchedule.closed ? 'border-red-200 bg-red-50' : 'border-muze-gold/40 bg-amber-50'}`}>
-            <div className="flex items-start gap-3">
-              <CalendarClock className="mt-0.5 h-6 w-6 flex-shrink-0 text-muze-brown" />
-              <div>
-                <p className="font-bold text-muze-dark">Weekly meal pre-order</p>
-                <p className="mt-1 text-sm text-muze-dark/75">Order by {preorderSchedule.deadlineLabel}.</p>
-                <p className="text-sm text-muze-dark/75">Delivered to Muze for pickup {preorderSchedule.deliveryLabel}.</p>
-                <p className="mt-2 text-sm text-muze-dark/65">This is prepared ahead for Monday, not an immediate café order.</p>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
         {/* Kitchen Closed Banner */}
         {!kitchenStatus.open && (
           <div className="mb-6 p-4 rounded-2xl bg-red-50 border border-red-200 flex items-start gap-3">
@@ -202,7 +169,7 @@ export default function CheckoutPage({
               Your Name
             </h3>
             <p className="text-sm text-muze-dark/60 mb-4">
-              {preorderSchedule ? 'We’ll use this name for your Monday pickup.' : 'We’ll call this name when your order is ready.'}
+              We’ll call this name when your order is ready.
             </p>
             <input
               type="text"
@@ -222,7 +189,7 @@ export default function CheckoutPage({
               Email <span className="text-red-600 font-normal text-sm">(required)</span>
             </h3>
             <p className="text-sm text-muze-dark/60 mb-4">
-              {preorderSchedule ? 'Your receipt and Monday pickup notifications will be sent here.' : 'Get notified when your order is ready for pickup.'}
+              Get notified when your order is ready for pickup.
             </p>
             <input
               type="email"
@@ -236,7 +203,7 @@ export default function CheckoutPage({
             />
           </div>
 
-          {channel === 'cafe' ? <SquareCardField onReady={handleSquareReady} /> : null}
+          <SquareCardField onReady={handleSquareReady} />
 
           {/* Order Review */}
           <div className="rounded-2xl bg-white border border-muze-gold/20 shadow-sm p-6 mb-5">
@@ -268,11 +235,11 @@ export default function CheckoutPage({
 
             <div className="mt-5 pt-5 border-t border-muze-gold/20 space-y-2">
               <div className="flex justify-between text-muze-dark/70">
-                <span>{taxIncluded ? 'Subtotal before tax' : 'Subtotal'}</span>
+                <span>Subtotal</span>
                 <span>{formatPriceFromDollars(subtotal)}</span>
               </div>
               <div className="flex justify-between text-muze-dark/70">
-                <span>{taxIncluded ? 'Nevada tax (included)' : 'Tax'}</span>
+                <span>Tax</span>
                 <span>{formatPriceFromDollars(tax)}</span>
               </div>
               <div className="flex justify-between text-xl font-bold pt-2 border-t border-muze-gold/20">
@@ -282,11 +249,10 @@ export default function CheckoutPage({
             </div>
           </div>
 
-          {/* Provider-aware online payment */}
+          {/* Online payment */}
           <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 mb-5">
             <p className="text-amber-900 text-sm text-center">
-            <strong>{preorderSchedule ? 'Weekly pre-order for Monday pickup at Muze.' : 'Pickup at Muze.'}</strong> Your payment will be processed securely through {paymentProvider}.
-            {taxIncluded ? ' All listed meal prices include Nevada sales tax.' : ''}
+            <strong>Pickup at Muze.</strong> Your payment will be processed securely through Square.
             </p>
           </div>
 
@@ -304,17 +270,15 @@ export default function CheckoutPage({
       <div className="fixed bottom-4 left-0 right-0 px-4 z-40">
         <button
           onClick={handleSubmit}
-          disabled={loading || !name.trim() || !email.trim() || !kitchenStatus.open || preorderSchedule?.closed}
+          disabled={loading || !name.trim() || !email.trim() || !kitchenStatus.open}
           className="w-full max-w-2xl mx-auto block py-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-lg hover:bg-muze-brown hover:text-white transition-colors shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {loading ? (
             <><Loader2 className="w-5 h-5 animate-spin" /> Placing Order…</>
           ) : !kitchenStatus.open ? (
             <><Lock className="w-5 h-5" /> Ordering paused</>
-          ) : preorderSchedule?.closed ? (
-            <><Lock className="w-5 h-5" /> Pre-orders closed</>
           ) : (
-            <>Continue to {paymentProvider} · {formatPriceFromDollars(total)}</>
+            <>Continue to Square · {formatPriceFromDollars(total)}</>
           )}
         </button>
       </div>

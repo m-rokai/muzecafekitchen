@@ -1,6 +1,5 @@
 import crypto from 'crypto';
 import * as defaultDb from '../db/database.js';
-import { partnerScheduleForDelivery, validDateOnly } from '../lib/partnerSchedule.js';
 
 export class OrderPricingError extends Error {
   constructor(message, code = 'ORDER_VALIDATION_FAILED', details = []) {
@@ -63,11 +62,12 @@ export function normalizeOrderRequest(order) {
  * database menu. Client-provided names, prices, subtotals, and totals are
  * intentionally ignored.
  */
-export async function validateAndPriceOrder(order, db = defaultDb, { now = new Date() } = {}) {
+export async function validateAndPriceOrder(order, db = defaultDb) {
+  if (order.channel !== 'cafe') {
+    throw new OrderPricingError('Only Muze Café orders are available', 'STOREFRONT_UNAVAILABLE');
+  }
   const normalized = normalizeOrderRequest(order);
   const verifiedItems = [];
-  const partnerIds = new Set();
-  const partnerDeliveryDates = new Set();
   let listedPriceTotalCents = 0;
 
   for (let itemIndex = 0; itemIndex < order.items.length; itemIndex += 1) {
@@ -94,19 +94,6 @@ export async function validateAndPriceOrder(order, db = defaultDb, { now = new D
         [{ path: `items.${itemIndex}.menu_item_id`, message: 'Item belongs to another storefront' }],
       );
     }
-    if (menuItem.partner_id) partnerIds.add(menuItem.partner_id);
-    if (order.channel === 'partner_meal') {
-      const deliveryDate = validDateOnly(String(menuItem.menu_week || '').slice(0, 10));
-      if (!deliveryDate) {
-        throw new OrderPricingError(
-          `${menuItem.name} does not have a valid delivery date`,
-          'PARTNER_SCHEDULE_INVALID',
-          [{ path: `items.${itemIndex}.menu_item_id`, message: 'Meal schedule is unavailable' }],
-        );
-      }
-      partnerDeliveryDates.add(deliveryDate);
-    }
-
     const linkedGroups = await db.getModifiersForItem(menuItem.id);
     const groupById = new Map(linkedGroups.map(group => [group.id, group]));
     const seenModifierIds = new Set();
@@ -205,44 +192,10 @@ export async function validateAndPriceOrder(order, db = defaultDb, { now = new D
     });
   }
 
-  if (order.channel === 'partner_meal' && partnerIds.size !== 1) {
-    throw new OrderPricingError(
-      'Partner meal orders must contain items from exactly one partner',
-      'PARTNER_ORDER_MISMATCH',
-      [{ path: 'items', message: 'Choose meals from one partner at a time' }],
-    );
-  }
-  let partnerSchedule = null;
-  if (order.channel === 'partner_meal') {
-    if (partnerDeliveryDates.size !== 1) {
-      throw new OrderPricingError(
-        'Partner meal orders must use one weekly delivery menu',
-        'PARTNER_SCHEDULE_MISMATCH',
-        [{ path: 'items', message: 'Choose meals from one delivery week' }],
-      );
-    }
-    partnerSchedule = partnerScheduleForDelivery([...partnerDeliveryDates][0]);
-    if (new Date(now) >= partnerSchedule.deadline) {
-      const error = new OrderPricingError(
-        'Weekly meal pre-orders closed Wednesday at 12:00 PM Pacific',
-        'PARTNER_PREORDER_CLOSED',
-        [{ path: 'items', message: 'This weekly pre-order window has closed' }],
-      );
-      error.status = 409;
-      throw error;
-    }
-  }
-  const taxSetting = order.channel === 'partner_meal' ? 'partner_tax_rate' : 'tax_rate';
-  const taxFallback = order.channel === 'partner_meal' ? '0.08375' : '0.0825';
-  const taxRate = parseTaxRate(await db.getSetting(taxSetting) ?? taxFallback);
-  const taxIncluded = order.channel === 'partner_meal';
-  const subtotalCents = taxIncluded
-    ? Math.round(listedPriceTotalCents / (1 + taxRate))
-    : listedPriceTotalCents;
-  const taxCents = taxIncluded
-    ? listedPriceTotalCents - subtotalCents
-    : Math.round(subtotalCents * taxRate);
-  const totalCents = taxIncluded ? listedPriceTotalCents : subtotalCents + taxCents;
+  const taxRate = parseTaxRate(await db.getSetting('tax_rate') ?? '0.0825');
+  const subtotalCents = listedPriceTotalCents;
+  const taxCents = Math.round(subtotalCents * taxRate);
+  const totalCents = subtotalCents + taxCents;
   return {
     normalized,
     requestHash: hashOrderRequest(normalized),
@@ -250,9 +203,5 @@ export async function validateAndPriceOrder(order, db = defaultDb, { now = new D
     subtotalCents,
     taxCents,
     totalCents,
-    taxIncluded,
-    partnerId: order.channel === 'partner_meal' ? [...partnerIds][0] : null,
-    partnerDeliveryDate: partnerSchedule?.deliveryDate || null,
-    partnerOrderDeadline: partnerSchedule?.deadline.toISOString() || null,
   };
 }

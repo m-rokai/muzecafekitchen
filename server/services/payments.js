@@ -1,13 +1,12 @@
 import Stripe from 'stripe';
 import { SquareClient, SquareEnvironment, WebhooksHelper } from 'square';
-import { formatPartnerDeadline, formatPartnerDeliveryDate } from '../lib/partnerSchedule.js';
 
 export const PAYMENT_PROVIDERS = Object.freeze(['square', 'stripe']);
 export const PAYMENT_STATUSES = Object.freeze([
   'unpaid', 'pending', 'authorized', 'paid', 'failed', 'refunded',
 ]);
 
-const CHANNEL_PROVIDER = Object.freeze({ cafe: 'square', partner_meal: 'stripe' });
+const CHANNEL_PROVIDER = Object.freeze({ cafe: 'square' });
 
 export class PaymentProviderNotConfiguredError extends Error {
   constructor(provider, missing) {
@@ -51,25 +50,13 @@ export function assertProviderConfigured(channel) {
       'SQUARE_WEBHOOK_SIGNATURE_KEY',
       'SQUARE_WEBHOOK_URL',
     ]);
-  } else {
-    requiredEnvironment('stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'CLIENT_URL']);
   }
   return provider;
 }
 
-function applicationOrigin() {
-  const configured = process.env.CLIENT_URL?.trim().replace(/\/$/, '');
-  if (!configured) throw new PaymentProviderNotConfiguredError('stripe', ['CLIENT_URL']);
-  const url = new URL(configured);
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/') {
-    throw new PaymentProviderNotConfiguredError('stripe', ['valid CLIENT_URL origin']);
-  }
-  return configured;
-}
-
 let stripeClient;
 function stripe() {
-  requiredEnvironment('stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'CLIENT_URL']);
+  requiredEnvironment('stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']);
   if (!stripeClient) {
     stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY.trim(), {
       maxNetworkRetries: 2,
@@ -155,102 +142,12 @@ async function createSquarePayment({ order, sourceToken, idempotencyKey }) {
   }
 }
 
-export function buildStripeCheckoutParams(order, origin, now = Date.now()) {
-  const deliveryLabel = formatPartnerDeliveryDate(order.preorder_delivery_date);
-  const deadlineLabel = formatPartnerDeadline(order.preorder_deadline);
-  const taxCopy = order.channel === 'partner_meal' ? 'Prices include Nevada sales tax.' : '';
-  const preorderCopy = deliveryLabel && deadlineLabel
-    ? `Weekly meal pre-order. Ordered by ${deadlineLabel}; delivered to Muze for pickup on ${deliveryLabel}. ${taxCopy}`
-    : `Weekly meal pre-order for pickup at Muze. ${taxCopy}`.trim();
-  const lineItems = order.items.map(item => ({
-      quantity: item.quantity,
-      price_data: {
-        currency: 'usd',
-        unit_amount: Math.round(item.total_price_cents / item.quantity),
-        product_data: {
-          name: item.item_name,
-          description: [preorderCopy, item.modifiers, item.special_instructions]
-            .filter(Boolean)
-            .join(' · ')
-            .slice(0, 500),
-        },
-      },
-    }));
-  if (order.tax_cents > 0 && order.channel !== 'partner_meal') {
-    lineItems.push({
-      quantity: 1,
-      price_data: {
-        currency: 'usd',
-        unit_amount: order.tax_cents,
-        product_data: { name: 'Nevada sales tax' },
-      },
-    });
-  }
-  return {
-    mode: 'payment',
-    customer_email: order.email,
-    client_reference_id: order.public_id,
-    line_items: lineItems,
-    custom_text: {
-      submit: { message: preorderCopy },
-      after_submit: { message: `Your receipt will confirm this pre-order schedule. ${preorderCopy}` },
-    },
-    metadata: {
-      order_public_id: order.public_id,
-      order_channel: order.channel,
-      preorder_deadline: order.preorder_deadline || '',
-      preorder_delivery_date: order.preorder_delivery_date || '',
-    },
-    payment_intent_data: {
-      description: `Muze weekly meal pre-order · ${deliveryLabel || 'Monday pickup'}`,
-      receipt_email: order.email,
-      metadata: {
-        order_public_id: order.public_id,
-        order_channel: order.channel,
-        preorder_deadline: order.preorder_deadline || '',
-        preorder_delivery_date: order.preorder_delivery_date || '',
-      },
-    },
-    success_url: `${origin}/orders/${order.public_id}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${origin}/partner-meals/checkout?payment=cancelled`,
-    expires_at: Math.floor(now / 1000) + (31 * 60),
-  };
-}
-
-async function createStripeCheckout({ order, idempotencyKey }) {
-  const origin = applicationOrigin();
-  try {
-    const session = await stripe().checkout.sessions.create(
-      buildStripeCheckoutParams(order, origin),
-      { idempotencyKey },
-    );
-    if (!session.id || !session.url) throw new Error('Stripe did not return a checkout URL');
-    return {
-      provider: 'stripe',
-      externalReference: session.id,
-      status: stripeStatus(session),
-      checkoutUrl: session.url,
-      metadata: { stripe_payment_intent: session.payment_intent || null },
-    };
-  } catch (error) {
-    if (error instanceof PaymentProviderNotConfiguredError) throw error;
-    throw new PaymentProcessingError(
-      'Stripe checkout is temporarily unavailable. Please retry.',
-      'stripe',
-      error,
-      { status: 503, code: 'PAYMENT_PROVIDER_UNAVAILABLE' },
-    );
-  }
-}
-
 export async function createProviderCheckout({ order, sourceToken = null, idempotencyKey }) {
-  const provider = providerForChannel(order.channel);
-  if (provider === 'square') {
-    return createSquarePayment({ order, sourceToken, idempotencyKey });
-  }
-  return createStripeCheckout({ order, idempotencyKey });
+  providerForChannel(order.channel);
+  return createSquarePayment({ order, sourceToken, idempotencyKey });
 }
 
+// Retained to reconcile signed payment events for historical meal orders.
 export function verifyStripeWebhook(rawBody, signature) {
   requiredEnvironment('stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']);
   return stripe().webhooks.constructEvent(
@@ -279,9 +176,6 @@ export function paymentActivationStatus() {
         'SQUARE_WEBHOOK_SIGNATURE_KEY',
         'SQUARE_WEBHOOK_URL',
       ].every(name => Boolean(process.env[name]?.trim())),
-    },
-    stripe: {
-      configured: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'CLIENT_URL'].every(name => Boolean(process.env[name]?.trim())),
     },
   };
 }
