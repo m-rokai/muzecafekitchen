@@ -40,7 +40,71 @@ export const SQUARE_MODIFIER_SETS = Object.freeze([
       { name: 'Mushroom Chai', priceCents: 200 },
     ],
   },
+  {
+    csvColumn: 'Modifier Set - FOOD',
+    externalSourceId: 'PYENBWT5NRMN63GXQ7IJPKX2',
+    name: 'FOOD',
+    displayName: 'Food add-ons',
+    minSelections: 0,
+    maxSelections: 1,
+    options: [
+      { name: 'Turkey Bacon', priceCents: 111 },
+      { name: 'Turkey Sausage', priceCents: 111 },
+      { name: 'Double Meat', priceCents: 333 },
+    ],
+  },
 ]);
+
+// The partner's written menu is the customer-facing source of truth for food
+// names and descriptions. Square remains the source of truth for price,
+// availability, IDs, and modifier assignments.
+const FOOD_MENU_OVERRIDES = Object.freeze({
+  ECYTEP6QYR2FYD7CERBQXC2F: {
+    name: 'Breakfast Burrito',
+    description: 'Egg, potatoes, your choice of bacon or sausage, salsa, and black beans.',
+    sortRank: 2,
+  },
+  ZJNM3GW4R5F2CZQNXYET7K74: {
+    name: 'Breakfast Sandwich',
+    description: 'Egg and cheese on wheat or sourdough, with bacon or sausage.',
+    sortRank: 0,
+  },
+  Q7G5FZA437QTKFLJRU5BLIL6: {
+    name: 'Breakfast Bowl',
+    description: 'Grits, potatoes, black beans, salsa, bacon, and sausage.',
+    sortRank: 1,
+  },
+  W4F6GBYGY36LGEAHTQYJTJDS: {
+    name: 'Bulgogi',
+    description: 'Ground beef, green onion, red onion, sesame seeds, garlic aioli, and a pairing salad.',
+    sortRank: 4,
+  },
+  BEMULVPJR6IEC34FP4OYXMHU: {
+    name: 'Caesar Salad',
+    description: 'Chicken, romaine, Caesar dressing, and Parmesan.',
+    sortRank: 1,
+  },
+  '4XFCZDIHPNH2CHLHDCM64UST': {
+    name: 'Club Sub',
+    description: 'Turkey, bacon, lettuce, tomato, and mayo.',
+    sortRank: 3,
+  },
+  '3MRUOQMLAP5IMNRKUGQHGO3Q': {
+    name: 'Harvest',
+    description: 'Turkey, stuffing, and cranberry.',
+    sortRank: 2,
+  },
+  DX7OO2K4ITZKIWN2M3JKDGAJ: {
+    name: 'Italian Chop',
+    description: 'Salami, turkey, ham, banana peppers, lettuce, mayo, mustard, and red wine vinegar.',
+    sortRank: 0,
+  },
+  UTK5XEUFC3C7KJ5L4643I2UT: {
+    name: 'Taco Salad',
+    description: 'Black beans, chicken tinga, lettuce, cheese, salsa, and chipotle ranch.',
+    sortRank: 5,
+  },
+});
 
 const CATEGORY_ORDER = Object.freeze([
   'Breakfast',
@@ -129,13 +193,15 @@ export function parseSquareCatalogCsv(csvText) {
       continue;
     }
 
+    const foodOverride = FOOD_MENU_OVERRIDES[externalSourceId];
     const item = {
       externalSourceId,
-      name,
-      description: text(record.Description),
+      name: foodOverride?.name ?? name,
+      description: foodOverride?.description ?? text(record.Description),
       priceCents: priceToCents(record.Price, rowNumber),
       category,
       sourceCategory: text(record.Categories),
+      sortRank: foodOverride?.sortRank,
       available: !archived && text(record['Square Online Item Visibility']).toLowerCase() !== 'hidden',
       modifierExternalSourceIds: SQUARE_MODIFIER_SETS
         .filter(group => text(record[group.csvColumn]).toUpperCase() === 'Y')
@@ -161,9 +227,13 @@ export function parseSquareCatalogCsv(csvText) {
   const categorySort = new Map(categories.map(category => [category.name, category.sortOrder]));
   items.sort((left, right) => (
     categorySort.get(left.category) - categorySort.get(right.category)
+    || (left.sortRank ?? Number.MAX_SAFE_INTEGER) - (right.sortRank ?? Number.MAX_SAFE_INTEGER)
     || left.name.localeCompare(right.name, 'en-US')
   ));
-  items.forEach((item, sortOrder) => { item.sortOrder = sortOrder; });
+  items.forEach((item, sortOrder) => {
+    item.sortOrder = sortOrder;
+    delete item.sortRank;
+  });
 
   return {
     sourceRows: records.length,
