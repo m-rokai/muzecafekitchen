@@ -32,12 +32,13 @@ import {
   ImageIcon,
   LayoutDashboard,
 } from 'lucide-react';
-import { adminAPI, isAuthenticated as checkAuth } from '../utils/api';
+import { adminAPI } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
 import StaffSignIn from '../components/StaffSignIn';
+import { useStaffAccess } from '../hooks/useStaffAccess';
 
 export default function AdminPage() {
-  const [authState, setAuthState] = useState('checking'); // 'checking' | 'authenticated' | 'unauthenticated'
+  const { authState, authError } = useStaffAccess('admin');
   const [activeTab, setActiveTab] = useState('overview');
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -56,29 +57,6 @@ export default function AdminPage() {
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
-  // Verify authentication on mount
-  useEffect(() => {
-    verifyAuth();
-  }, []);
-
-  async function verifyAuth() {
-    if (!await checkAuth()) {
-      setAuthState('unauthenticated');
-      return;
-    }
-
-    try {
-      // Verify token is still valid with server
-      const result = await adminAPI.verifyToken();
-      if (result.auth?.role !== 'admin') throw new Error('Administrator access is required');
-      setAuthState('authenticated');
-    } catch (err) {
-      // Token invalid or expired
-      console.log('Token verification failed:', err.message);
-      setAuthState('unauthenticated');
-    }
-  }
-
   useEffect(() => {
     if (authState === 'authenticated') {
       loadData();
@@ -87,11 +65,6 @@ export default function AdminPage() {
 
   async function handleLogout() {
     await adminAPI.logout();
-    setAuthState('unauthenticated');
-  }
-
-  function handleAuthSuccess() {
-    setAuthState('authenticated');
   }
 
   if (authState === 'checking') {
@@ -103,7 +76,7 @@ export default function AdminPage() {
   }
 
   if (authState === 'unauthenticated') {
-    return <StaffSignIn onSuccess={handleAuthSuccess} title="Admin Access" />;
+    return <StaffSignIn title="Admin Access" destination="/admin" authError={authError} />;
   }
 
   async function loadData() {
@@ -2172,8 +2145,8 @@ function SettingsSection({ settings, onUpdate }) {
       <div className="card p-6">
         <h2 className="text-xl font-bold text-gray-900 mb-2">Staff account security</h2>
         <p className="text-gray-600 text-sm">
-          Staff credentials and password resets are managed through Supabase Authentication.
-          Access roles are stored in protected app metadata and cannot be changed from the browser.
+          Sign in with the link sent to your work email. Verified @muzeoffice.com accounts
+          receive administrator access. Contact an administrator to arrange access for other staff.
         </p>
       </div>
 

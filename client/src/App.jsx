@@ -10,12 +10,14 @@ const ConfirmationPage = lazy(() => import('./pages/ConfirmationPage'));
 const KitchenDisplay = lazy(() => import('./pages/KitchenDisplay'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const ClosurePage = lazy(() => import('./pages/ClosurePage'));
+const AuthCallbackPage = lazy(() => import('./pages/AuthCallbackPage'));
 
 function App() {
   return (
     <Router>
       <Suspense fallback={<div className="min-h-screen bg-muze-dark" aria-label="Loading" />}>
         <Routes>
+            <Route path="/auth/callback" element={<AuthCallbackPage />} />
             {CLOSED ? (
               <>
                 {/* Café offline — staff routes stay reachable, everything else

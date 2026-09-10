@@ -7,7 +7,7 @@ stateless Express API backed by Supabase Postgres, Auth, Storage, and Realtime.
 
 - Vercel serves `client/dist`; its zero-configuration Express detection bundles
   the root `index.js` export as one Function for `/api` routes.
-- Supabase Auth issues anonymous customer sessions and email/password staff sessions.
+- Supabase Auth issues anonymous customer sessions and email magic-link staff sessions.
 - New orders use the authenticated Supabase user ID as `orders.customer_id`.
 - The API uses a server-only Postgres pooler connection for atomic pricing and order writes.
 - RLS protects every exposed table. Browser roles have no direct write grants.
@@ -96,11 +96,14 @@ policies, and private kitchen Broadcast. Sign in again or refresh the session
 after a role change so JWT-based database/Realtime checks receive the new claim;
 the Express API checks the current Auth user on each request.
 
-Each person still needs a café Auth account and password. This rule does not
-create accounts or send invitations. The existing trusted `staff:create` script
-creates an already-confirmed account, so use it only after verifying the intended
-account owner. Self-service registration and password recovery screens are not
-part of this change.
+The admin and kitchen sign-in screens now send email magic links. An exact
+`@muzeoffice.com` address can create its café Auth account through the sign-in
+screen; the administrator role is granted only after email verification. Existing
+staff accounts outside that domain can request a link, but the screen does not
+create new outside-domain accounts. The server still enforces protected roles.
+The trusted `staff:create` script creates an already-confirmed account, so use it
+only after verifying the intended account owner. Staff do not need its password
+to use the magic-link screen.
 
 Applied to the live `muzecafe` project on September 9, 2026. All 23 database
 regressions passed after application, the trigger has no client EXECUTE grant,
@@ -112,6 +115,37 @@ anonymous conversion, metadata spoofing, automatic revocation, role preservation
 and trigger privileges. Run it with `psql -v ON_ERROR_STOP=1 -f` against a database
 with the migration installed. It creates only synthetic rows inside a transaction
 that is rolled back and does not send emails or exercise a real Auth sign-in.
+
+### Staff magic links and Google Workspace email
+
+`/admin` and `/kitchen` request a Supabase email link. `/auth/callback` completes
+sign-in, verifies the role through `/api/admin/verify-token`, and returns to the
+requested staff page. The callback remains available while customer ordering is
+closed. Redirect destinations are restricted to `/admin` and `/kitchen`.
+
+The browser uses Supabase's implicit flow, so the email can be opened in another
+browser or device. The SDK consumes the session fragment; invalid links display
+recovery instructions and remove error parameters. Waiting tabs follow Auth
+events, including logout. Resending waits 60 seconds, using elapsed wall time so
+a suspended tab does not extend the cooldown.
+
+Hosted project `gmnztmdpbqhboafrtvoz` uses Google Workspace SMTP:
+
+- Host `smtp.gmail.com`, port `587` (STARTTLS).
+- Username and sender `notifications@muzeoffice.com`; sender name `Muze Cafe`.
+- Password is managed privately in Supabase's SMTP settings.
+- Email confirmations remain enabled, links expire after one hour, and the
+  configured delivery limit is 30 emails per hour.
+- Site URL: `https://muzecafe-kitchen-stage.vercel.app/admin`.
+- Exact allowed callbacks are the same origin followed by
+  `/auth/callback?next=%2Fadmin` or `/auth/callback?next=%2Fkitchen`.
+
+The password field returned by the Management API is hash-shaped, not a usable
+Google app password. Do not use that returned value for a direct SMTP login test;
+the resulting authentication rejection does not establish that the saved
+credentials are wrong. Verify delivery with an authorized Supabase sign-in email.
+Current verification and release status are in
+`MAGIC_LINK_HANDOFF_2026-09-09.md`.
 
 ## Vercel setup
 

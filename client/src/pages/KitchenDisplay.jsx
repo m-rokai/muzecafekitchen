@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, ChefHat, CheckCircle, Bell, Volume2, VolumeX, RefreshCw, LogOut, Lock, Unlock, X } from 'lucide-react';
-import { orderAPI, adminAPI, isAuthenticated as checkAuth } from '../utils/api';
+import { orderAPI, adminAPI } from '../utils/api';
 import { supabase } from '../lib/supabase';
 import { formatPickupNumber, formatTimeSince } from '../utils/formatters';
 import StaffSignIn from '../components/StaffSignIn';
+import { useStaffAccess } from '../hooks/useStaffAccess';
 import CancelReasonModal from '../components/CancelReasonModal';
 
 export default function KitchenDisplay() {
-  const [authState, setAuthState] = useState('checking'); // 'checking' | 'authenticated' | 'unauthenticated'
+  const { authState, authError } = useStaffAccess('staff');
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -28,28 +29,6 @@ export default function KitchenDisplay() {
     soundEnabledRef.current = soundEnabled;
   }, [soundEnabled]);
 
-  async function verifyAuth() {
-    if (!await checkAuth()) {
-      setAuthState('unauthenticated');
-      return;
-    }
-
-    try {
-      // Verify token is still valid with server
-      await adminAPI.verifyToken();
-      setAuthState('authenticated');
-    } catch (err) {
-      // Token invalid or expired
-      console.log('Token verification failed:', err.message);
-      setAuthState('unauthenticated');
-    }
-  }
-
-  useEffect(() => {
-    const timer = setTimeout(verifyAuth, 0);
-    return () => clearTimeout(timer);
-  }, []);
-
   // Update clock every second
   useEffect(() => {
     const clockInterval = setInterval(() => {
@@ -61,11 +40,6 @@ export default function KitchenDisplay() {
 
   async function handleLogout() {
     await adminAPI.logout();
-    setAuthState('unauthenticated');
-  }
-
-  function handleAuthSuccess() {
-    setAuthState('authenticated');
   }
 
   const loadOrders = useCallback(async () => {
@@ -227,7 +201,7 @@ export default function KitchenDisplay() {
   }
 
   if (authState === 'unauthenticated') {
-    return <StaffSignIn onSuccess={handleAuthSuccess} title="Kitchen Access" />;
+    return <StaffSignIn title="Kitchen Access" destination="/kitchen" authError={authError} />;
   }
 
   return (

@@ -137,15 +137,19 @@ export const settingsAPI = {
 };
 
 export const adminAPI = {
-  signIn: async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message || 'Sign in failed');
-    const role = data.user?.app_metadata?.role;
-    if (!['staff', 'admin'].includes(role)) {
-      await supabase.auth.signOut({ scope: 'local' });
-      throw new Error('This account does not have staff access');
-    }
-    return { success: true, user: data.user };
+  sendSignInLink: async (email, destination = '/admin') => {
+    const address = email.trim().toLowerCase();
+    const redirect = new URL('/auth/callback', window.location.origin);
+    redirect.searchParams.set('next', destination === '/kitchen' ? '/kitchen' : '/admin');
+    const { error } = await supabase.auth.signInWithOtp({
+      email: address,
+      options: {
+        // Account creation convenience only; the database and API enforce roles.
+        shouldCreateUser: /^[^@\s]+@muzeoffice\.com$/.test(address),
+        emailRedirectTo: redirect.toString(),
+      },
+    });
+    if (error) throw error;
   },
   verifyToken: () => authRequest('/admin/verify-token'),
   logout: () => supabase.auth.signOut({ scope: 'local' }),

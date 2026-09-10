@@ -16,7 +16,8 @@ changes take effect on the hosted site when this version is deployed. Earlier
 audit and implementation-plan documents describe the former two-portal scope.
 
 The latest local verification and continuation notes are in
-[the café-only checkpoint](./CAFE_ONLY_HANDOFF_2026-09-09.md).
+[the magic-link checkpoint](./MAGIC_LINK_HANDOFF_2026-09-09.md). Earlier café-only
+verification is in [the café-only checkpoint](./CAFE_ONLY_HANDOFF_2026-09-09.md).
 
 The active platform migration and setup instructions are in
 [MIGRATION_VERCEL_SUPABASE.md](./MIGRATION_VERCEL_SUPABASE.md).

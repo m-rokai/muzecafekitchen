@@ -12,6 +12,8 @@ export const supabase = createClient(
   publishableKey || 'missing-publishable-key',
   {
     auth: {
+      // Browser-only app: links can open on a different device or browser.
+      flowType: 'implicit',
       detectSessionInUrl: true,
       persistSession: true,
       autoRefreshToken: true,
