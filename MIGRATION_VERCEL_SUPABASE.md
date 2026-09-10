@@ -21,9 +21,10 @@ stateless Express API backed by Supabase Postgres, Auth, Storage, and Realtime.
 - Old `/partner-meals` URLs redirect to the café. The API rejects new meal
   orders and hides retired meal items from the public and admin catalogs.
 - Meal imports and their Vercel cron schedule have been removed.
-- Historical meal orders, database tables, and signed Stripe webhook handling
-  are retained for reconciliation. Existing migration files are historical and
-  must not be rewritten to remove those records.
+- Historical meal orders, database tables, and stored provider references are
+  retained for reconciliation. New Stripe checkout and webhook traffic are not
+  accepted. Existing migration files are historical and must not be rewritten
+  to remove those records.
 
 ## Local setup
 
@@ -175,9 +176,8 @@ Production as appropriate:
 origins to Supabase Auth redirect URLs. Generate `CRON_SECRET` with at least 32
 random bytes; Vercel sends it as the cron Authorization bearer token.
 
-Register `/api/webhooks/square` in the Square dashboard. Retain the existing
-Stripe webhook and `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` only when needed
-to reconcile historical meal payments. `SQUARE_WEBHOOK_URL` must exactly match the public Square
+Register `/api/webhooks/square` in the Square dashboard. `SQUARE_WEBHOOK_URL`
+must exactly match the public Square
 notification URL because it participates in signature verification. Keep all
 provider secrets server-only; only Square's application ID and location ID are
 published through `VITE_` variables.

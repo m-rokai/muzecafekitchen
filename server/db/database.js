@@ -61,10 +61,18 @@ export async function checkDatabaseIntegrity() {
 }
 
 // ============ Category CRUD ============
-export async function getAllCategories(channel = null) {
+export async function getAllCategories(channel = null, availableOnly = false) {
   const sql = getSql();
   const rows = channel
-    ? await sql`select * from public.categories where channel = ${channel} order by sort_order, name`
+    ? await sql`
+        select c.* from public.categories c
+        where c.channel = ${channel}
+          and (${availableOnly} = false or exists (
+            select 1 from public.menu_items mi
+            where mi.category_id = c.id and mi.channel = ${channel} and mi.available = true
+          ))
+        order by c.sort_order, c.name
+      `
     : await sql`select * from public.categories order by channel, sort_order, name`;
   return normalizeRows(rows);
 }
@@ -453,8 +461,8 @@ export async function createOrderWithItems({
   pickupWindowStart = null,
   pickupWindowEnd = null,
   paymentStatus = 'pending',
-  paymentMethod = channel === 'cafe' ? 'square' : 'stripe',
-  paymentProvider = channel === 'cafe' ? 'square' : 'stripe',
+  paymentMethod = 'square',
+  paymentProvider = 'square',
 }) {
   const sql = getSql();
   return sql.begin(async tx => {

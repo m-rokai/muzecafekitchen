@@ -10,11 +10,13 @@
     "test": "node --test --experimental-test-module-mocks",
     "seed": "node scripts/seedSupabase.js",
     "staff:create": "node scripts/createStaffUser.js",
-    "migrate:sqlite": "node scripts/migrateSqlite.js"
+    "migrate:sqlite": "node scripts/migrateSqlite.js",
+    "catalog:square": "node scripts/syncSquareCatalog.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.114.0",
     "cors": "^2.8.5",
+    "csv-parse": "6.1.0",
     "dotenv": "^17.2.3",
     "express": "5.2.1",
     "express-rate-limit": "^8.2.1",
@@ -22,7 +24,6 @@
     "nodemailer": "9.1.1",
     "postgres": "3.4.9",
     "square": "45.1.0",
-    "stripe": "22.6.1",
     "zod": "^4.3.5"
   }
 }

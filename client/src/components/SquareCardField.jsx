@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, CreditCard, Loader2 } from 'lucide-react';
+import { AlertCircle, CreditCard, Loader2, TestTube2 } from 'lucide-react';
 
 let squareSdkPromise;
 
@@ -28,15 +28,22 @@ export default function SquareCardField({ onReady }) {
   const locationId = import.meta.env.VITE_SQUARE_LOCATION_ID;
   const environment = import.meta.env.VITE_SQUARE_ENVIRONMENT === 'production' ? 'production' : 'sandbox';
   const configured = Boolean(applicationId && locationId);
-  const [status, setStatus] = useState(configured ? 'loading' : 'error');
-  const [error, setError] = useState(configured
-    ? null
-    : 'Square checkout is awaiting its application and location configuration.');
+  const environmentMismatch = configured && (
+    (environment === 'sandbox' && !applicationId.startsWith('sandbox-'))
+    || (environment === 'production' && applicationId.startsWith('sandbox-'))
+  );
+  const canInitialize = configured && !environmentMismatch;
+  const [status, setStatus] = useState(canInitialize ? 'loading' : 'error');
+  const [error, setError] = useState(() => {
+    if (!configured) return 'Square checkout is awaiting its application and location configuration.';
+    if (environmentMismatch) return 'Square checkout is blocked because its application and environment do not match.';
+    return null;
+  });
 
   useEffect(() => {
     let active = true;
     let card;
-    if (!configured) {
+    if (!canInitialize) {
       onReady(null);
       return undefined;
     }
@@ -65,7 +72,7 @@ export default function SquareCardField({ onReady }) {
       onReady(null);
       card?.destroy().catch(() => {});
     };
-  }, [applicationId, configured, environment, locationId, onReady]);
+  }, [applicationId, canInitialize, environment, locationId, onReady]);
 
   return (
     <div className="rounded-2xl bg-white border border-muze-gold/20 shadow-sm p-6 mb-5">
@@ -73,6 +80,12 @@ export default function SquareCardField({ onReady }) {
         <CreditCard className="w-5 h-5 text-muze-brown" />
         Pay securely with Square
       </h3>
+      {environment === 'sandbox' ? (
+        <div className="my-4 rounded-xl border border-sky-200 bg-sky-50 p-3 flex gap-2 text-sm text-sky-900">
+          <TestTube2 className="w-5 h-5 flex-shrink-0" />
+          <span><strong>Test mode:</strong> only Square sandbox cards work, and no real charges can be created.</span>
+        </div>
+      ) : null}
       <p className="text-sm text-muze-dark/60 mb-4">Your card details go directly to Square and are never stored by Muze.</p>
       {status === 'loading' ? (
         <div className="h-20 rounded-xl bg-muze-cream/60 flex items-center justify-center gap-2 text-muze-dark/60">

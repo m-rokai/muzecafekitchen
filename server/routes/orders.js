@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import express from 'express';
 import * as db from '../db/database.js';
 import {
@@ -27,6 +26,7 @@ import {
   createProviderCheckout,
   PaymentProcessingError,
   PaymentProviderNotConfiguredError,
+  providerIdempotencyKey,
 } from '../services/payments.js';
 
 const router = express.Router();
@@ -182,9 +182,9 @@ router.post('/', rejectRetiredStorefront, orderRateLimit, requireCustomerIdentit
       if (!created) throw error;
     }
 
-    const paymentIdempotencyKey = crypto.createHash('sha256')
-      .update(`${provider}:${customer.id}:${idempotencyKey}:${provider === 'square' ? paymentAttemptKey : 'checkout'}`)
-      .digest('hex');
+    const paymentIdempotencyKey = providerIdempotencyKey(
+      `${provider}:${customer.id}:${idempotencyKey}:${provider === 'square' ? paymentAttemptKey : 'checkout'}`,
+    );
     const attempt = await db.createPaymentAttempt({
       orderId: created.id,
       provider,

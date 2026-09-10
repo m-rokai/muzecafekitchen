@@ -1,7 +1,7 @@
-import Stripe from 'stripe';
+import crypto from 'node:crypto';
 import { SquareClient, SquareEnvironment, WebhooksHelper } from 'square';
 
-export const PAYMENT_PROVIDERS = Object.freeze(['square', 'stripe']);
+export const PAYMENT_PROVIDERS = Object.freeze(['square']);
 export const PAYMENT_STATUSES = Object.freeze([
   'unpaid', 'pending', 'authorized', 'paid', 'failed', 'refunded',
 ]);
@@ -41,6 +41,12 @@ export function providerForChannel(channel) {
   return provider;
 }
 
+// Square caps payment idempotency keys at 45 characters. A SHA-256 digest in
+// base64url form is deterministic, URL-safe, and 43 characters long.
+export function providerIdempotencyKey(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('base64url');
+}
+
 export function assertProviderConfigured(channel) {
   const provider = providerForChannel(channel);
   if (provider === 'square') {
@@ -52,18 +58,6 @@ export function assertProviderConfigured(channel) {
     ]);
   }
   return provider;
-}
-
-let stripeClient;
-function stripe() {
-  requiredEnvironment('stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']);
-  if (!stripeClient) {
-    stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY.trim(), {
-      maxNetworkRetries: 2,
-      timeout: 15_000,
-    });
-  }
-  return stripeClient;
 }
 
 let squareClient;
@@ -91,12 +85,6 @@ export function squareStatus(status) {
     case 'FAILED': return 'failed';
     default: return 'pending';
   }
-}
-
-export function stripeStatus(session) {
-  if (session?.payment_status === 'paid' || session?.payment_status === 'no_payment_required') return 'paid';
-  if (session?.status === 'expired') return 'failed';
-  return 'pending';
 }
 
 async function createSquarePayment({ order, sourceToken, idempotencyKey }) {
@@ -128,7 +116,10 @@ async function createSquarePayment({ order, sourceToken, idempotencyKey }) {
   } catch (error) {
     if (error instanceof PaymentProviderNotConfiguredError || error instanceof PaymentProcessingError) throw error;
     const statusCode = Number(error.statusCode || error.status || 0);
-    const definitiveRejection = statusCode >= 400 && statusCode < 500;
+    // Square uses 400/402/422 for card/source validation failures. Authentication,
+    // permissions, a bad location, and rate limiting are provider/configuration
+    // failures and must never be described to the customer as a card decline.
+    const definitiveRejection = [400, 402, 422].includes(statusCode);
     throw new PaymentProcessingError(
       definitiveRejection
         ? 'Square declined this payment. Please review the card details or try another card.'
@@ -147,16 +138,6 @@ export async function createProviderCheckout({ order, sourceToken = null, idempo
   return createSquarePayment({ order, sourceToken, idempotencyKey });
 }
 
-// Retained to reconcile signed payment events for historical meal orders.
-export function verifyStripeWebhook(rawBody, signature) {
-  requiredEnvironment('stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']);
-  return stripe().webhooks.constructEvent(
-    rawBody,
-    signature,
-    process.env.STRIPE_WEBHOOK_SECRET.trim(),
-  );
-}
-
 export async function verifySquareWebhook(rawBody, signature) {
   requiredEnvironment('square', ['SQUARE_WEBHOOK_SIGNATURE_KEY', 'SQUARE_WEBHOOK_URL']);
   return WebhooksHelper.verifySignature({
@@ -170,6 +151,7 @@ export async function verifySquareWebhook(rawBody, signature) {
 export function paymentActivationStatus() {
   return {
     square: {
+      environment: process.env.SQUARE_ENVIRONMENT === 'production' ? 'production' : 'sandbox',
       configured: [
         'SQUARE_ACCESS_TOKEN',
         'SQUARE_LOCATION_ID',

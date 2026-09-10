@@ -9,6 +9,31 @@ import SquareCardField from '../components/SquareCardField';
 import PortalHomeLink from '../components/PortalHomeLink';
 import { calculateOrderTotals } from '../utils/pricing';
 
+const CHECKOUT_ATTEMPT_STORAGE_KEY = 'muze_square_checkout_attempt';
+
+function newCheckoutKey(prefix) {
+  return typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function readStoredCheckoutAttempt() {
+  try {
+    return JSON.parse(sessionStorage.getItem(CHECKOUT_ATTEMPT_STORAGE_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function storeCheckoutAttempt(attempt) {
+  try {
+    if (attempt) sessionStorage.setItem(CHECKOUT_ATTEMPT_STORAGE_KEY, JSON.stringify(attempt));
+    else sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY);
+  } catch {
+    // Checkout still works when storage is unavailable; only refresh recovery is reduced.
+  }
+}
+
 export default function CheckoutPage() {
   const basePath = '/cafe';
   const channel = 'cafe';
@@ -26,6 +51,7 @@ export default function CheckoutPage() {
   ));
   const [taxRate, setTaxRate] = useState(0.0825);
   const [kitchenStatus, setKitchenStatus] = useState({ open: true, message: '' });
+  const [squareReady, setSquareReady] = useState(false);
   const orderSubmittedRef = useRef(false);
   const idempotencyKeyRef = useRef(null);
   const paymentAttemptKeyRef = useRef(null);
@@ -33,6 +59,7 @@ export default function CheckoutPage() {
   const squareCardRef = useRef(null);
   const handleSquareReady = useCallback(card => {
     squareCardRef.current = card;
+    setSquareReady(Boolean(card));
   }, []);
 
   useEffect(() => {
@@ -63,16 +90,6 @@ export default function CheckoutPage() {
       return;
     }
     try {
-      if (!idempotencyKeyRef.current) {
-        idempotencyKeyRef.current = typeof globalThis.crypto?.randomUUID === 'function'
-          ? globalThis.crypto.randomUUID()
-          : `order-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      }
-      if (!paymentAttemptKeyRef.current) {
-        paymentAttemptKeyRef.current = typeof globalThis.crypto?.randomUUID === 'function'
-          ? globalThis.crypto.randomUUID()
-          : `payment-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      }
       const orderData = {
         customerName: name.trim(),
         email: email.trim(),
@@ -86,10 +103,41 @@ export default function CheckoutPage() {
           })) || [],
         })),
       };
+      const requestSignature = JSON.stringify(orderData);
+      const stored = readStoredCheckoutAttempt();
+      const requestMatchesStoredAttempt = stored?.requestSignature === requestSignature;
+      if (!idempotencyKeyRef.current || !paymentAttemptKeyRef.current || !requestMatchesStoredAttempt) {
+        if (requestMatchesStoredAttempt
+          && stored.idempotencyKey && stored.paymentAttemptKey) {
+          idempotencyKeyRef.current = stored.idempotencyKey;
+          paymentAttemptKeyRef.current = stored.paymentAttemptKey;
+        } else {
+          idempotencyKeyRef.current = newCheckoutKey('order');
+          paymentAttemptKeyRef.current = newCheckoutKey('payment');
+        }
+        storeCheckoutAttempt({
+          requestSignature,
+          idempotencyKey: idempotencyKeyRef.current,
+          paymentAttemptKey: paymentAttemptKeyRef.current,
+        });
+      }
 
       if (!squareCardRef.current) throw new Error('Secure Square payment is not ready yet');
       if (!squareTokenRef.current) {
-        const tokenResult = await squareCardRef.current.tokenize();
+        const [givenName, ...familyNameParts] = name.trim().split(/\s+/);
+        const tokenResult = await squareCardRef.current.tokenize({
+          amount: total.toFixed(2),
+          billingContact: {
+            givenName,
+            familyName: familyNameParts.join(' ') || undefined,
+            email: email.trim(),
+            countryCode: 'US',
+          },
+          currencyCode: 'USD',
+          intent: 'CHARGE',
+          customerInitiated: true,
+          sellerKeyedIn: false,
+        });
         if (tokenResult.status !== 'OK' || !tokenResult.token) {
           const detail = tokenResult.errors?.[0]?.detail;
           throw new Error(detail || 'Please check your card details and try again');
@@ -111,13 +159,27 @@ export default function CheckoutPage() {
         pickupNumber: result.pickup_number,
         timestamp: Date.now(),
       }));
+      storeCheckoutAttempt(null);
       clearCart();
       navigate(`/orders/${result.id}`, { replace: true });
     } catch (err) {
       console.error('Order failed:', err);
       if (err.status === 402) {
+        paymentAttemptKeyRef.current = newCheckoutKey('payment');
+        squareTokenRef.current = null;
+        const stored = readStoredCheckoutAttempt();
+        if (stored?.requestSignature && idempotencyKeyRef.current) {
+          storeCheckoutAttempt({
+            ...stored,
+            idempotencyKey: idempotencyKeyRef.current,
+            paymentAttemptKey: paymentAttemptKeyRef.current,
+          });
+        }
+      } else if (err.status === 409) {
+        idempotencyKeyRef.current = null;
         paymentAttemptKeyRef.current = null;
         squareTokenRef.current = null;
+        storeCheckoutAttempt(null);
       }
       setError(err.message || 'Failed to place order. Please try again.');
     } finally {
@@ -270,13 +332,15 @@ export default function CheckoutPage() {
       <div className="fixed bottom-4 left-0 right-0 px-4 z-40">
         <button
           onClick={handleSubmit}
-          disabled={loading || !name.trim() || !email.trim() || !kitchenStatus.open}
+          disabled={loading || !squareReady || !name.trim() || !email.trim() || !kitchenStatus.open}
           className="w-full max-w-2xl mx-auto block py-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-lg hover:bg-muze-brown hover:text-white transition-colors shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {loading ? (
             <><Loader2 className="w-5 h-5 animate-spin" /> Placing Order…</>
           ) : !kitchenStatus.open ? (
             <><Lock className="w-5 h-5" /> Ordering paused</>
+          ) : !squareReady ? (
+            <><Loader2 className="w-5 h-5 animate-spin" /> Loading secure payment…</>
           ) : (
             <>Continue to Square · {formatPriceFromDollars(total)}</>
           )}

@@ -8,7 +8,7 @@ router.use(requireCafeQuery);
 // Get all categories
 router.get('/categories', async (req, res) => {
   try {
-    const categories = await db.getAllCategories('cafe');
+    const categories = await db.getAllCategories('cafe', true);
     res.json(categories);
   } catch (err) {
     console.error('Error getting categories:', err);
