@@ -55,8 +55,33 @@ based on those results, or repeat direct SMTP authentication with the API value.
 
 ## Release and live verification
 
-Local implementation and regression verification are complete. The next step is
-deployment to the linked `muzecafe-kitchen-stage` project, followed by the single
-authorized Supabase magic-link request. Record the deployment and actual send
-result here. Inbox receipt and clicking the link require the owner's confirmation.
-Do not send additional emails without authorization.
+Implementation commit: `8a5a619` (`Use email magic links for cafe staff sign-in`).
+Deployed successfully to the linked `muzecafe-kitchen-stage` project's production
+target, with no environment changes:
+
+- Stable URL: `https://muzecafe-kitchen-stage.vercel.app`.
+- Deployment: `dpl_DLwLT4RfTc5Miu9vfygFwdN6CJG5`, status `READY`.
+- Build URL: `https://muzecafe-kitchen-stage-3e3eb4mrv-mrokais-projects.vercel.app`.
+- Hosted callback and email-only admin form verified in the browser.
+- `/api/health` returned `status: ok` and `database: ok`.
+- The one authorized email was requested through the **live admin form**, with
+  Supabase's `/auth/v1/otp` returning HTTP 200 and the UI showing Check your inbox.
+- No browser exceptions were recorded during the hosted callback and send flow.
+- A subsequent scoped database check found the owner's email confirmed, a sign-in
+  recorded, and the protected role set to `admin`.
+- The owner confirmed **"its working"** after using the link, then requested the
+  final commit and deployment at the end of the workday. Live email delivery and
+  administrator sign-in are verified.
+
+The prepared direct-send script failed before making any request because local
+server configuration was absent; it was discarded. Only the live browser form
+sent a real email. Do not send additional emails without authorization.
+
+The health endpoint's `features.email.configured = false` describes the separate
+order-notification service, not Supabase Auth SMTP. Square and order-notification
+configuration remain separate launch work; the sign-in release does not resolve
+them. The separate Luna worktree was not changed.
+
+The final documentation commit records this successful live check; its deployment
+uses the same verified application code. The stable URL above is the release
+entry point. Local review browser and server processes are stopped at handoff.
