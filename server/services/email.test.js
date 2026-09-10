@@ -28,3 +28,15 @@ test('partner order receipts clearly identify the preorder cutoff and Monday del
     assert.match(receipt, /\$20\.59/);
   }
 });
+
+test('customer receipts include the Cuss Worthy and Muze co-brand', () => {
+  const html = generateConfirmationEmail(order);
+  const text = generateConfirmationText(order);
+
+  assert.match(html, /\/brand\/cuss-worthy-wordmark\.png/);
+  assert.match(html, /\/logo\.png/);
+  for (const receipt of [html, text]) {
+    assert.match(receipt, /Cuss Worthy Café/);
+    assert.match(receipt, /Muze/);
+  }
+});

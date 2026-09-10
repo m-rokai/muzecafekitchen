@@ -7,6 +7,7 @@ import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
 import CancelReasonModal from '../components/CancelReasonModal';
 import PortalHomeLink from '../components/PortalHomeLink';
+import CafeBrandLockup from '../components/CafeBrandLockup';
 
 export default function ConfirmationPage() {
   const { orderId } = useParams();
@@ -122,6 +123,7 @@ export default function ConfirmationPage() {
       <main className="max-w-2xl mx-auto px-4 py-4">
         {/* Hero: Glass success card */}
         <GlassPanel intensity="hero" panelClassName="px-6 py-8 sm:px-8 sm:py-10 text-center" overLight>
+          <CafeBrandLockup compact className="mx-auto mb-6 justify-center" />
           <div className={`w-20 h-20 rounded-full ${status.bg} mx-auto flex items-center justify-center mb-4`}>
             <StatusIcon className={`w-10 h-10 ${status.color}`} strokeWidth={1.8} />
           </div>
@@ -211,7 +213,7 @@ export default function ConfirmationPage() {
           <div className="rounded-2xl bg-white/85 border border-white/70 p-4 text-center">
             <Coffee className="w-6 h-6 text-muze-brown mx-auto mb-2" strokeWidth={1.8} />
             <p className="text-xs text-muze-dark/60 uppercase tracking-wider">Pickup At</p>
-            <p className="font-bold text-muze-dark mt-1">Muze Café</p>
+            <p className="font-bold text-muze-dark mt-1">Cuss Worthy Café at Muze</p>
           </div>
         </div>}
 

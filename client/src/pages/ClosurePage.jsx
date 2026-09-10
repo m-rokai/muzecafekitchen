@@ -1,5 +1,6 @@
 import { CLOSURE } from '../config/closure';
 import GradientMesh from '../components/glass/GradientMesh';
+import CafeBrandLockup from '../components/CafeBrandLockup';
 
 // Full-screen "temporarily closed" takeover shown on all customer-facing
 // routes while CLOSED is true in config/closure.js. Copy lives in CLOSURE.
@@ -10,11 +11,7 @@ export default function ClosurePage() {
 
       <div className="w-full max-w-md text-center">
         <div className="backdrop-blur-xl bg-white/55 border border-white/60 rounded-3xl shadow-xl px-8 py-10 sm:px-10 sm:py-12">
-          <img
-            src="/logo.png"
-            alt="Muze Café"
-            className="w-24 h-24 mx-auto mb-6 object-contain drop-shadow-sm"
-          />
+          <CafeBrandLockup className="mb-7" />
 
           <h1 className="text-2xl sm:text-3xl font-bold text-muze-dark">
             {CLOSURE.title}

@@ -1,5 +1,6 @@
 import { Megaphone, Search, X } from 'lucide-react';
 import GlassPanel from '../glass/GlassPanel';
+import CafeBrandLockup from '../CafeBrandLockup';
 
 /**
  * HeroSection — glass-over-mesh hero with greeting and search.
@@ -9,7 +10,7 @@ import GlassPanel from '../glass/GlassPanel';
 export default function HeroSection({
   searchQuery,
   setSearchQuery,
-  eyebrow = 'Muze Café',
+  eyebrow = 'Cuss Worthy Café at Muze',
   title = 'Order ahead, skip the line.',
   description = 'Pay securely online, then pick up at Muze.',
   announcement,
@@ -24,6 +25,8 @@ export default function HeroSection({
         panelClassName="px-4 py-4 sm:px-6 sm:py-5"
       >
         <div className="flex flex-col gap-4">
+          <CafeBrandLockup />
+
           {showAnnouncement && (
             <div className="flex items-start gap-3 rounded-xl border border-muze-gold/50 bg-muze-gold/20 px-4 py-3 text-muze-dark">
               <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-muze-gold/35">
@@ -45,10 +48,10 @@ export default function HeroSection({
               <p className="text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-muze-brown/80">
                 {eyebrow}
               </p>
-              <h1 className="mt-1 text-2xl font-bold leading-tight text-muze-dark sm:text-3xl">
+              <h1 className="mt-1 text-balance text-2xl font-bold leading-tight text-muze-dark sm:text-3xl">
                 {title}
               </h1>
-              <p className="mt-1 text-sm text-muze-dark/65">
+              <p className="mt-1 text-pretty text-sm text-muze-dark/65">
                 {description}
               </p>
             </div>

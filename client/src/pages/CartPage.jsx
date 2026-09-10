@@ -8,6 +8,7 @@ import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
 import PortalHomeLink from '../components/PortalHomeLink';
 import { calculateOrderTotals } from '../utils/pricing';
+import CafeBrandLockup from '../components/CafeBrandLockup';
 
 export default function CartPage() {
   const basePath = '/cafe';
@@ -55,13 +56,13 @@ export default function CartPage() {
           >
             <ArrowLeft className="w-5 h-5 text-muze-dark" />
           </button>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold text-muze-dark">Your Cart</h1>
             <p className="text-sm text-muze-dark/60">
               {items.length} item{items.length === 1 ? '' : 's'}
             </p>
           </div>
-          <PortalHomeLink className="ml-auto" label="Home" />
+          <CafeBrandLockup compact className="ml-auto hidden sm:inline-flex" />
         </div>
       </header>
 

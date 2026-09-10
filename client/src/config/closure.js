@@ -18,7 +18,7 @@ export const CLOSURE = {
   title: "We're temporarily closed",
   // Each string is rendered as its own paragraph.
   body: [
-    "Muze Café has paused online ordering while we work on what's next.",
+    "Cuss Worthy Café at Muze has paused online ordering while we work on what's next.",
     "Thank you for every coffee run and kind word — we can't wait to welcome you back soon.",
   ],
   // Optional call-to-action button. Set ctaHref to null to hide it.

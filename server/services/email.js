@@ -14,12 +14,17 @@ const transporter = process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD
   : null;
 
 // Email configuration
-const FROM_NAME = process.env.GMAIL_FROM_NAME || process.env.CAFE_NAME || 'Muze Cafe';
+const FROM_NAME = process.env.GMAIL_FROM_NAME || 'Cuss Worthy Café at Muze';
 const FROM_ADDRESS = process.env.GMAIL_USER;
 const FROM_EMAIL = FROM_ADDRESS ? `"${FROM_NAME}" <${FROM_ADDRESS}>` : null;
-const CAFE_NAME = process.env.CAFE_NAME || 'Muze Office';
+const CAFE_NAME = process.env.CAFE_NAME || 'Muze Café';
+const PARTNER_NAME = 'Cuss Worthy Café';
+const COBRAND_NAME = `${PARTNER_NAME} at ${CAFE_NAME}`;
+const PUBLIC_SITE_URL = (process.env.PUBLIC_SITE_URL || 'https://muzecafe-kitchen-stage.vercel.app').replace(/\/$/, '');
+const CUSS_WORTHY_WORDMARK_URL = `${PUBLIC_SITE_URL}/brand/cuss-worthy-wordmark.png`;
+const MUZE_LOGO_URL = `${PUBLIC_SITE_URL}/logo.png`;
 
-// Muze Office Brand Colors
+// Shared Cuss Worthy Café × Muze color palette
 const COLORS = {
   gold: '#F5B82E',      // Primary yellow/gold
   brown: '#A85A32',     // Terracotta brown
@@ -27,6 +32,8 @@ const COLORS = {
   dark: '#2D2014',      // Dark brown for text
   light: '#FFFDF8',     // Off-white
   warmGray: '#F5F0E8',  // Warm gray for sections
+  black: '#080808',      // Cuss Worthy black
+  chrome: '#D8D3CE',    // Chrome/silver accent
 };
 
 /**
@@ -56,6 +63,24 @@ function escapeHtml(value) {
   })[character]);
 }
 
+function receiptBrandHeader(statusLabel) {
+  return `
+    <div style="background: ${COLORS.black}; padding: 28px 24px 30px 24px; text-align: center;">
+      <img src="${CUSS_WORTHY_WORDMARK_URL}" width="320" alt="Cuss Worthy Café" style="display: block; width: 100%; max-width: 320px; height: auto; margin: 0 auto; border: 0;" />
+      <p style="margin: 2px 0 10px 0; color: ${COLORS.chrome}; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;">Café partner at</p>
+      <img src="${MUZE_LOGO_URL}" width="190" alt="${escapeHtml(CAFE_NAME)}" style="display: block; width: 190px; max-width: 55%; height: auto; margin: 0 auto 12px auto; border: 0;" />
+      <p style="margin: 0; color: ${COLORS.gold}; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px;">${escapeHtml(statusLabel)}</p>
+    </div>`;
+}
+
+function receiptBrandFooter(message) {
+  return `
+    <div style="text-align: center; padding: 24px;">
+      <p style="margin: 0 0 5px 0; color: ${COLORS.dark}; font-size: 13px; font-weight: 700;">${escapeHtml(COBRAND_NAME)}</p>
+      <p style="margin: 0; color: ${COLORS.brown}; font-size: 12px;">${escapeHtml(message)}</p>
+    </div>`;
+}
+
 function preorderReceiptDetails(order) {
   if (order.channel !== 'partner_meal') return null;
   const delivery = formatPartnerDeliveryDate(order.preorder_delivery_date);
@@ -64,7 +89,7 @@ function preorderReceiptDetails(order) {
 }
 
 /**
- * Generate order confirmation email HTML - Muze Office Branded
+ * Generate co-branded order confirmation email HTML
  */
 export function generateConfirmationEmail(order) {
   const preorder = preorderReceiptDetails(order);
@@ -92,14 +117,7 @@ export function generateConfirmationEmail(order) {
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; background-color: ${COLORS.cream}; margin: 0; padding: 24px;">
       <div style="max-width: 600px; margin: 0 auto; background: ${COLORS.light}; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(45, 32, 20, 0.12);">
 
-        <!-- Header with Logo Area -->
-        <div style="background: linear-gradient(135deg, ${COLORS.dark} 0%, #3D2E1F 100%); padding: 40px 32px; text-align: center;">
-          <div style="display: inline-block; background: ${COLORS.gold}; width: 60px; height: 60px; border-radius: 50%; margin-bottom: 16px; line-height: 60px;">
-            <span style="font-size: 28px;">☕</span>
-          </div>
-          <h1 style="margin: 0 0 8px 0; font-size: 28px; font-weight: 700; color: ${COLORS.light}; letter-spacing: -0.5px;">${CAFE_NAME}</h1>
-          <p style="margin: 0; color: ${COLORS.gold}; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">${preorder ? 'Weekly Meal Pre-Order Confirmed' : 'Order Confirmed'}</p>
-        </div>
+        ${receiptBrandHeader(preorder ? 'Weekly Meal Pre-Order Confirmed' : 'Order Confirmed')}
 
         <!-- Pickup Number Banner -->
         <div style="background: linear-gradient(135deg, ${COLORS.gold} 0%, #E5A829 100%); padding: 28px; text-align: center;">
@@ -172,10 +190,7 @@ export function generateConfirmationEmail(order) {
 
       </div>
 
-      <!-- Bottom Branding -->
-      <div style="text-align: center; padding: 24px;">
-        <p style="margin: 0; color: ${COLORS.brown}; font-size: 12px;">Made with ☕ by ${CAFE_NAME}</p>
-      </div>
+      ${receiptBrandFooter('Order online. Pick up at Muze.')}
     </body>
     </html>
   `;
@@ -185,7 +200,7 @@ export function generateConfirmationText(order) {
   const preorder = preorderReceiptDetails(order);
   const taxIncluded = order.channel === 'partner_meal';
   const lines = [
-    `${CAFE_NAME} — ${preorder ? 'Weekly meal pre-order confirmed' : 'Order confirmed'}`,
+    `${COBRAND_NAME} — ${preorder ? 'Weekly meal pre-order confirmed' : 'Order confirmed'}`,
     `Pickup number: #${formatPickupNumber(order.pickup_number)}`,
   ];
   if (preorder) {
@@ -207,7 +222,7 @@ export function generateConfirmationText(order) {
 }
 
 /**
- * Generate order ready email HTML - Muze Office Branded
+ * Generate co-branded order ready email HTML
  */
 function generateReadyEmail(order) {
   return `
@@ -220,14 +235,7 @@ function generateReadyEmail(order) {
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; background-color: ${COLORS.cream}; margin: 0; padding: 24px;">
       <div style="max-width: 600px; margin: 0 auto; background: ${COLORS.light}; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(45, 32, 20, 0.12);">
 
-        <!-- Header -->
-        <div style="background: linear-gradient(135deg, ${COLORS.brown} 0%, #8B4A2A 100%); padding: 40px 32px; text-align: center;">
-          <div style="display: inline-block; background: ${COLORS.gold}; width: 70px; height: 70px; border-radius: 50%; margin-bottom: 16px; line-height: 70px;">
-            <span style="font-size: 36px;">✓</span>
-          </div>
-          <h1 style="margin: 0 0 8px 0; font-size: 28px; font-weight: 700; color: ${COLORS.light}; letter-spacing: -0.5px;">${CAFE_NAME}</h1>
-          <p style="margin: 0; color: ${COLORS.gold}; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Order Ready!</p>
-        </div>
+        ${receiptBrandHeader('Order Ready!')}
 
         <!-- Pickup Number - Large & Prominent -->
         <div style="background: linear-gradient(135deg, ${COLORS.gold} 0%, #E5A829 100%); padding: 40px; text-align: center;">
@@ -238,7 +246,7 @@ function generateReadyEmail(order) {
         <!-- Message -->
         <div style="padding: 40px 32px; text-align: center;">
           <p style="margin: 0 0 16px 0; font-size: 22px; color: ${COLORS.dark}; font-weight: 600;">
-            Hi ${order.customer_name}!
+            Hi ${escapeHtml(order.customer_name)}!
           </p>
           <p style="margin: 0 0 24px 0; font-size: 16px; color: #6B5D4D; line-height: 1.7;">
             Great news! Your order is ready and waiting for you at the counter.
@@ -258,10 +266,7 @@ function generateReadyEmail(order) {
 
       </div>
 
-      <!-- Bottom Branding -->
-      <div style="text-align: center; padding: 24px;">
-        <p style="margin: 0; color: ${COLORS.brown}; font-size: 12px;">Made with ☕ by ${CAFE_NAME}</p>
-      </div>
+      ${receiptBrandFooter('Freshly prepared by Cuss Worthy Café. Hosted at Muze.')}
     </body>
     </html>
   `;
@@ -289,8 +294,8 @@ export async function sendOrderConfirmation(order) {
       from: FROM_EMAIL,
       to: order.email,
       subject: preorder
-        ? `Weekly meal pre-order #${formatPickupNumber(order.pickup_number)} confirmed · ${preorder.delivery}`
-        : `Order #${formatPickupNumber(order.pickup_number)} Confirmed ☕ ${CAFE_NAME}`,
+        ? `Weekly meal pre-order #${formatPickupNumber(order.pickup_number)} confirmed · ${COBRAND_NAME}`
+        : `Order #${formatPickupNumber(order.pickup_number)} Confirmed · ${COBRAND_NAME}`,
       html: generateConfirmationEmail(order),
       text: generateConfirmationText(order),
     });
@@ -304,11 +309,11 @@ export async function sendOrderConfirmation(order) {
 }
 
 /**
- * Generate order cancellation email HTML - Muze Office Branded
+ * Generate co-branded order cancellation email HTML
  */
 function generateCancellationEmail(order) {
   const reasonLine = order.cancellation_reason
-    ? `<p style="margin: 16px 0 0 0; font-size: 14px; color: #6B5D4D;">Reason on file: <em>${order.cancellation_reason}</em></p>`
+    ? `<p style="margin: 16px 0 0 0; font-size: 14px; color: #6B5D4D;">Reason on file: <em>${escapeHtml(order.cancellation_reason)}</em></p>`
     : '';
   const cancelledByLine = order.cancelled_by === 'staff'
     ? `<p style="margin: 8px 0 0 0; font-size: 13px; color: ${COLORS.brown};">Cancelled by our team.</p>`
@@ -324,16 +329,10 @@ function generateCancellationEmail(order) {
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; background-color: ${COLORS.cream}; margin: 0; padding: 24px;">
       <div style="max-width: 600px; margin: 0 auto; background: ${COLORS.light}; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(45, 32, 20, 0.12);">
 
-        <div style="background: linear-gradient(135deg, ${COLORS.dark} 0%, #3D2E1F 100%); padding: 40px 32px; text-align: center;">
-          <div style="display: inline-block; background: ${COLORS.gold}; width: 60px; height: 60px; border-radius: 50%; margin-bottom: 16px; line-height: 60px;">
-            <span style="font-size: 28px;">×</span>
-          </div>
-          <h1 style="margin: 0 0 8px 0; font-size: 28px; font-weight: 700; color: ${COLORS.light}; letter-spacing: -0.5px;">${CAFE_NAME}</h1>
-          <p style="margin: 0; color: ${COLORS.gold}; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Order Cancelled</p>
-        </div>
+        ${receiptBrandHeader('Order Cancelled')}
 
         <div style="padding: 40px 32px; text-align: center;">
-          <p style="margin: 0 0 16px 0; font-size: 22px; color: ${COLORS.dark}; font-weight: 600;">Hi ${order.customer_name},</p>
+          <p style="margin: 0 0 16px 0; font-size: 22px; color: ${COLORS.dark}; font-weight: 600;">Hi ${escapeHtml(order.customer_name)},</p>
           <p style="margin: 0; font-size: 16px; color: #6B5D4D; line-height: 1.7;">
             Order <strong>#${formatPickupNumber(order.pickup_number)}</strong> has been cancelled. You won't be charged.
           </p>
@@ -349,16 +348,14 @@ function generateCancellationEmail(order) {
         </div>
       </div>
 
-      <div style="text-align: center; padding: 24px;">
-        <p style="margin: 0; color: ${COLORS.brown}; font-size: 12px;">Made with ☕ by ${CAFE_NAME}</p>
-      </div>
+      ${receiptBrandFooter('Prepared by Cuss Worthy Café. Pick up at Muze.')}
     </body>
     </html>
   `;
 }
 
 /**
- * Generate pickup-reminder email HTML - Muze Office Branded
+ * Generate co-branded pickup-reminder email HTML
  */
 function generatePickupReminderEmail(order) {
   return `
@@ -371,13 +368,7 @@ function generatePickupReminderEmail(order) {
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; background-color: ${COLORS.cream}; margin: 0; padding: 24px;">
       <div style="max-width: 600px; margin: 0 auto; background: ${COLORS.light}; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(45, 32, 20, 0.12);">
 
-        <div style="background: linear-gradient(135deg, ${COLORS.brown} 0%, #8B4A2A 100%); padding: 36px 32px; text-align: center;">
-          <div style="display: inline-block; background: ${COLORS.gold}; width: 70px; height: 70px; border-radius: 50%; margin-bottom: 16px; line-height: 70px;">
-            <span style="font-size: 32px;">⏰</span>
-          </div>
-          <h1 style="margin: 0 0 8px 0; font-size: 26px; font-weight: 700; color: ${COLORS.light}; letter-spacing: -0.5px;">${CAFE_NAME}</h1>
-          <p style="margin: 0; color: ${COLORS.gold}; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Friendly reminder</p>
-        </div>
+        ${receiptBrandHeader('Friendly Reminder')}
 
         <div style="background: linear-gradient(135deg, ${COLORS.gold} 0%, #E5A829 100%); padding: 36px; text-align: center;">
           <p style="margin: 0 0 10px 0; color: ${COLORS.dark}; font-size: 13px; text-transform: uppercase; letter-spacing: 3px; font-weight: 600;">Pickup Number</p>
@@ -385,7 +376,7 @@ function generatePickupReminderEmail(order) {
         </div>
 
         <div style="padding: 36px 32px; text-align: center;">
-          <p style="margin: 0 0 14px 0; font-size: 20px; color: ${COLORS.dark}; font-weight: 600;">Hi ${order.customer_name},</p>
+          <p style="margin: 0 0 14px 0; font-size: 20px; color: ${COLORS.dark}; font-weight: 600;">Hi ${escapeHtml(order.customer_name)},</p>
           <p style="margin: 0 0 24px 0; font-size: 16px; color: #6B5D4D; line-height: 1.7;">
             Your order's been waiting at the counter for a few minutes — swing by whenever you're ready!
           </p>
@@ -399,9 +390,7 @@ function generatePickupReminderEmail(order) {
         </div>
       </div>
 
-      <div style="text-align: center; padding: 24px;">
-        <p style="margin: 0; color: ${COLORS.brown}; font-size: 12px;">Made with ☕ by ${CAFE_NAME}</p>
-      </div>
+      ${receiptBrandFooter('Freshly prepared by Cuss Worthy Café. Hosted at Muze.')}
     </body>
     </html>
   `;
@@ -427,7 +416,7 @@ export async function sendOrderReadyNotification(order) {
     const info = await transporter.sendMail({
       from: FROM_EMAIL,
       to: order.email,
-      subject: `Your Order #${formatPickupNumber(order.pickup_number)} is Ready! 🎉 ${CAFE_NAME}`,
+      subject: `Your Order #${formatPickupNumber(order.pickup_number)} is Ready! · ${COBRAND_NAME}`,
       html: generateReadyEmail(order),
     });
 
@@ -457,7 +446,7 @@ export async function sendOrderCancellation(order) {
     const info = await transporter.sendMail({
       from: FROM_EMAIL,
       to: order.email,
-      subject: `Order #${formatPickupNumber(order.pickup_number)} cancelled · ${CAFE_NAME}`,
+      subject: `Order #${formatPickupNumber(order.pickup_number)} cancelled · ${COBRAND_NAME}`,
       html: generateCancellationEmail(order),
     });
     console.log(`Cancellation email sent to ${order.email} for order #${order.pickup_number}`);
@@ -486,7 +475,7 @@ export async function sendPickupReminder(order) {
     const info = await transporter.sendMail({
       from: FROM_EMAIL,
       to: order.email,
-      subject: `Your order #${formatPickupNumber(order.pickup_number)} is waiting ☕`,
+      subject: `Your order #${formatPickupNumber(order.pickup_number)} is waiting · ${COBRAND_NAME}`,
       html: generatePickupReminderEmail(order),
     });
     console.log(`Pickup reminder email sent to ${order.email} for order #${order.pickup_number}`);

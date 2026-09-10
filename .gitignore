@@ -49,6 +49,9 @@ Thumbs.db
 *.png
 *.jpg
 *.jpeg
+!client/public/brand/
+!client/public/brand/cuss-worthy-mark.png
+!client/public/brand/cuss-worthy-wordmark.png
 
 # Temporary files
 *.tmp

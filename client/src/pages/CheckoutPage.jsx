@@ -6,8 +6,8 @@ import { orderAPI, settingsAPI } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
 import GradientMesh from '../components/glass/GradientMesh';
 import SquareCardField from '../components/SquareCardField';
-import PortalHomeLink from '../components/PortalHomeLink';
 import { calculateOrderTotals } from '../utils/pricing';
+import CafeBrandLockup from '../components/CafeBrandLockup';
 
 const CHECKOUT_ATTEMPT_STORAGE_KEY = 'muze_square_checkout_attempt';
 
@@ -204,7 +204,7 @@ export default function CheckoutPage() {
             <ArrowLeft className="w-5 h-5 text-muze-dark" />
           </button>
           <h1 className="text-2xl font-bold text-muze-dark">Checkout</h1>
-          <PortalHomeLink className="ml-auto" label="Home" />
+          <CafeBrandLockup compact className="ml-auto hidden sm:inline-flex" />
         </div>
       </header>
 
