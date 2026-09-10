@@ -97,6 +97,29 @@ begin
   perform pg_temp.check_domain_role('revoking confirmation removes the automatic grant',
     (select raw_app_meta_data ->> 'role' is null from auth.users where id = subject));
 
+  subject := pg_temp.domain_user('info@cussworthy.cafe', false);
+  perform pg_temp.check_domain_role('unconfirmed approved partner has no admin role',
+    (select raw_app_meta_data ->> 'role' is null from auth.users where id = subject));
+  update auth.users set email_confirmed_at = now() where id = subject;
+  perform pg_temp.check_domain_role('confirmed Cussworthy domain partner receives admin',
+    (select raw_app_meta_data ->> 'role' = 'admin'
+      and raw_app_meta_data #>> '{muze_domain_admin,domain}' = 'info@cussworthy.cafe'
+      from auth.users where id = subject));
+  update auth.users set email = prefix || '@cussworthy.cafe' where id = subject;
+  perform pg_temp.check_domain_role('other Cussworthy addresses are not approved',
+    (select raw_app_meta_data ->> 'role' is null
+      and not (raw_app_meta_data ? 'muze_domain_admin') from auth.users where id = subject));
+
+  subject := pg_temp.domain_user('CussworthyCafe@GMAIL.COM');
+  perform pg_temp.check_domain_role('approved Gmail partner match is case-insensitive',
+    (select raw_app_meta_data ->> 'role' = 'admin'
+      and raw_app_meta_data #>> '{muze_domain_admin,domain}' = 'cussworthycafe@gmail.com'
+      from auth.users where id = subject));
+  update auth.users set email = 'cussworthycafe+test@gmail.com' where id = subject;
+  perform pg_temp.check_domain_role('Gmail plus aliases are not approved',
+    (select raw_app_meta_data ->> 'role' is null
+      and not (raw_app_meta_data ? 'muze_domain_admin') from auth.users where id = subject));
+
   subject := pg_temp.domain_user(prefix || '+anonymous@muzeoffice.com', true, true);
   perform pg_temp.check_domain_role('anonymous identity never receives domain admin',
     (select raw_app_meta_data ->> 'role' is null from auth.users where id = subject));

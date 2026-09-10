@@ -106,7 +106,7 @@ export default function StaffSignIn({ title = 'Staff Access', destination = '/ad
         </form>
 
         <p className="text-center text-gray-500 text-sm mt-6">
-          Use your @muzeoffice.com email or an existing staff account.
+          Use your @muzeoffice.com email, an approved partner email, or an existing staff account.
         </p>
       </div>
     </div>

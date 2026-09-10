@@ -136,6 +136,16 @@ export const settingsAPI = {
   getPopularItems: () => request('/admin/public/popular-items').catch(() => []),
 };
 
+const SELF_SERVICE_ADMIN_EMAILS = new Set([
+  'info@cussworthy.cafe',
+  'cussworthycafe@gmail.com',
+]);
+
+function canCreateAdminAccount(address) {
+  return /^[^@\s]+@muzeoffice\.com$/.test(address)
+    || SELF_SERVICE_ADMIN_EMAILS.has(address);
+}
+
 export const adminAPI = {
   sendSignInLink: async (email, destination = '/admin') => {
     const address = email.trim().toLowerCase();
@@ -145,7 +155,7 @@ export const adminAPI = {
       email: address,
       options: {
         // Account creation convenience only; the database and API enforce roles.
-        shouldCreateUser: /^[^@\s]+@muzeoffice\.com$/.test(address),
+        shouldCreateUser: canCreateAdminAccount(address),
         emailRedirectTo: redirect.toString(),
       },
     });

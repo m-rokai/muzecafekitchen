@@ -2146,7 +2146,8 @@ function SettingsSection({ settings, onUpdate }) {
         <h2 className="text-xl font-bold text-gray-900 mb-2">Staff account security</h2>
         <p className="text-gray-600 text-sm">
           Sign in with the link sent to your work email. Verified @muzeoffice.com accounts
-          receive administrator access. Contact an administrator to arrange access for other staff.
+          and explicitly approved partner accounts receive administrator access. Contact an
+          administrator to arrange access for other staff.
         </p>
       </div>
 

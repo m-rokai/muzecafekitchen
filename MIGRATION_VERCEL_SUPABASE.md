@@ -76,7 +76,7 @@ Create staff accounts through `npm run staff:create`. The script writes `staff`
 or `admin` only to protected `app_metadata`; authorization never trusts editable
 user metadata.
 
-### Muze Office administrator domain
+### Approved dashboard administrators
 
 After applying `20260909234424_muzeoffice_domain_admin.sql`, confirmed,
 non-anonymous accounts whose email domain is exactly `muzeoffice.com` receive
@@ -84,6 +84,16 @@ non-anonymous accounts whose email domain is exactly `muzeoffice.com` receive
 subdomains, lookalike domains, unconfirmed addresses, and editable user metadata
 do not qualify. Keep Supabase email confirmations enabled (`mailer_autoconfirm`
 must remain false).
+
+Migration `20260910210811_allow_partner_dashboard_emails.sql` also grants this
+same administrator role to the exact verified addresses `info@cussworthy.cafe`
+and `cussworthycafe@gmail.com`. Matching is case-insensitive, but no other
+`cussworthy.cafe` address, Gmail address, or plus alias qualifies.
+
+Applied to the live project on September 10, 2026. All 28 access-control
+regressions passed in a rolled-back transaction. Neither approved partner account
+existed at deployment time; its first magic-link request creates it, and opening
+that link confirms the address before administrator access is granted.
 
 The Auth row trigger runs on account creation and changes to the email,
 confirmation state, anonymous status, or protected metadata. It also reconciles
@@ -98,10 +108,11 @@ after a role change so JWT-based database/Realtime checks receive the new claim;
 the Express API checks the current Auth user on each request.
 
 The admin and kitchen sign-in screens now send email magic links. An exact
-`@muzeoffice.com` address can create its café Auth account through the sign-in
-screen; the administrator role is granted only after email verification. Existing
-staff accounts outside that domain can request a link, but the screen does not
-create new outside-domain accounts. The server still enforces protected roles.
+`@muzeoffice.com` address or either exact approved partner address can create its
+café Auth account through the sign-in screen; the administrator role is granted
+only after email verification. Other existing staff accounts can request a link,
+but the screen does not create unapproved accounts. The server still enforces
+protected roles.
 The trusted `staff:create` script creates an already-confirmed account, so use it
 only after verifying the intended account owner. Staff do not need its password
 to use the magic-link screen.
