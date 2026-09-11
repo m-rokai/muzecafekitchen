@@ -2,6 +2,18 @@ import { parse } from 'csv-parse/sync';
 
 export const SQUARE_SOURCE_PROVIDER = 'square';
 
+const FOOD_MODIFIER_COLUMN = 'Modifier Set - FOOD';
+const BREAKFAST_BURRITO_EXTERNAL_ID = 'ECYTEP6QYR2FYD7CERBQXC2F';
+const BREAKFAST_SANDWICH_EXTERNAL_ID = 'ZJNM3GW4R5F2CZQNXYET7K74';
+
+const BREAKFAST_MODIFIER_IDS = Object.freeze({
+  protein: 'MUZE_BREAKFAST_PROTEIN',
+  doubleProtein: 'MUZE_BREAKFAST_DOUBLE_PROTEIN',
+  addOns: 'MUZE_BREAKFAST_ADD_ONS',
+  sandwichSubstitutions: 'MUZE_BREAKFAST_SANDWICH_SUBSTITUTIONS',
+  burritoBeans: 'MUZE_BREAKFAST_BURRITO_BEANS',
+});
+
 export const SQUARE_MODIFIER_SETS = Object.freeze([
   {
     csvColumn: 'Modifier Set - MILK',
@@ -41,16 +53,58 @@ export const SQUARE_MODIFIER_SETS = Object.freeze([
     ],
   },
   {
-    csvColumn: 'Modifier Set - FOOD',
-    externalSourceId: 'PYENBWT5NRMN63GXQ7IJPKX2',
-    name: 'FOOD',
-    displayName: 'Food add-ons',
+    externalSourceId: BREAKFAST_MODIFIER_IDS.protein,
+    name: 'BREAKFAST PROTEIN',
+    displayName: 'Choose your protein',
+    minSelections: 1,
+    maxSelections: 1,
+    options: [
+      { name: 'Turkey Bacon', priceCents: 0 },
+      { name: 'Turkey Sausage', priceCents: 0 },
+    ],
+  },
+  {
+    externalSourceId: BREAKFAST_MODIFIER_IDS.doubleProtein,
+    name: 'BREAKFAST DOUBLE PROTEIN',
+    displayName: 'Double protein',
     minSelections: 0,
     maxSelections: 1,
     options: [
-      { name: 'Turkey Bacon', priceCents: 111 },
-      { name: 'Turkey Sausage', priceCents: 111 },
-      { name: 'Double Meat', priceCents: 333 },
+      { name: 'Double Protein', priceCents: 333 },
+    ],
+  },
+  {
+    externalSourceId: BREAKFAST_MODIFIER_IDS.addOns,
+    name: 'BREAKFAST ADD ONS',
+    displayName: 'Breakfast add-ons',
+    minSelections: 0,
+    maxSelections: 3,
+    options: [
+      { name: 'Add Bacon', priceCents: 111 },
+      { name: 'Add Sausage', priceCents: 111 },
+      { name: 'Avocado', priceCents: 222 },
+    ],
+  },
+  {
+    externalSourceId: BREAKFAST_MODIFIER_IDS.sandwichSubstitutions,
+    name: 'BREAKFAST SANDWICH SUBSTITUTIONS',
+    displayName: 'Sandwich substitutions',
+    minSelections: 0,
+    maxSelections: 1,
+    options: [
+      { name: 'Sub Bagel', priceCents: 0 },
+      { name: 'Sub Wrap', priceCents: 0 },
+    ],
+  },
+  {
+    externalSourceId: BREAKFAST_MODIFIER_IDS.burritoBeans,
+    name: 'BREAKFAST BURRITO BEANS',
+    displayName: 'Bean customization',
+    minSelections: 0,
+    maxSelections: 1,
+    options: [
+      { name: 'No Beans', priceCents: 0 },
+      { name: 'Add Beans', priceCents: 0 },
     ],
   },
 ]);
@@ -123,7 +177,8 @@ const REQUIRED_COLUMNS = Object.freeze([
   'Price',
   'Archived',
   'Square Online Item Visibility',
-  ...SQUARE_MODIFIER_SETS.map(group => group.csvColumn),
+  ...SQUARE_MODIFIER_SETS.map(group => group.csvColumn).filter(Boolean),
+  FOOD_MODIFIER_COLUMN,
 ]);
 
 function text(value) {
@@ -152,6 +207,30 @@ function priceToCents(value, rowNumber) {
 
 function itemKey(item) {
   return `${item.category.toLocaleLowerCase('en-US')}\u0000${item.name.toLocaleLowerCase('en-US')}`;
+}
+
+function modifierExternalSourceIdsFor(record, itemExternalSourceId) {
+  const modifierIds = SQUARE_MODIFIER_SETS
+    .filter(group => group.csvColumn && text(record[group.csvColumn]).toUpperCase() === 'Y')
+    .map(group => group.externalSourceId);
+
+  if (text(record[FOOD_MODIFIER_COLUMN]).toUpperCase() !== 'Y') return modifierIds;
+  if (![BREAKFAST_BURRITO_EXTERNAL_ID, BREAKFAST_SANDWICH_EXTERNAL_ID].includes(itemExternalSourceId)) {
+    return modifierIds;
+  }
+
+  modifierIds.push(
+    BREAKFAST_MODIFIER_IDS.protein,
+    BREAKFAST_MODIFIER_IDS.doubleProtein,
+    BREAKFAST_MODIFIER_IDS.addOns,
+  );
+  if (itemExternalSourceId === BREAKFAST_SANDWICH_EXTERNAL_ID) {
+    modifierIds.push(BREAKFAST_MODIFIER_IDS.sandwichSubstitutions);
+  }
+  if (itemExternalSourceId === BREAKFAST_BURRITO_EXTERNAL_ID) {
+    modifierIds.push(BREAKFAST_MODIFIER_IDS.burritoBeans);
+  }
+  return modifierIds;
 }
 
 export function parseSquareCatalogCsv(csvText) {
@@ -203,9 +282,7 @@ export function parseSquareCatalogCsv(csvText) {
       sourceCategory: text(record.Categories),
       sortRank: foodOverride?.sortRank,
       available: !archived && text(record['Square Online Item Visibility']).toLowerCase() !== 'hidden',
-      modifierExternalSourceIds: SQUARE_MODIFIER_SETS
-        .filter(group => text(record[group.csvColumn]).toUpperCase() === 'Y')
-        .map(group => group.externalSourceId),
+      modifierExternalSourceIds: modifierExternalSourceIdsFor(record, externalSourceId),
     };
 
     const duplicateKey = itemKey(item);
