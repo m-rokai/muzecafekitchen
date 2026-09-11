@@ -4,7 +4,7 @@ import { formatPriceFromDollars } from '../../utils/formatters';
 import { useCart } from '../../context/CartContext';
 import { getCategoryStyle } from './categoryIcons';
 
-export default function MenuItemCard({ item, onClick, index = 0, disabled = false }) {
+export default function MenuItemCard({ item, onClick, index = 0, disabled = false, headingLevel = 3 }) {
   const { addItem } = useCart();
   const { Icon, tint } = getCategoryStyle(item.category_name || '', item.name || '');
   const [pingKey, setPingKey] = useState(0);
@@ -38,6 +38,7 @@ export default function MenuItemCard({ item, onClick, index = 0, disabled = fals
   }
 
   const unavailable = disabled || item.available === 0 || item.available === false;
+  const Heading = headingLevel === 4 ? 'h4' : 'h3';
 
   return (
     <article
@@ -71,7 +72,7 @@ export default function MenuItemCard({ item, onClick, index = 0, disabled = fals
 
       {/* Content */}
       <div className="p-4 flex-1 flex flex-col">
-        <h3 className="font-semibold text-muze-dark text-lg leading-tight">{item.name}</h3>
+        <Heading className="text-balance font-semibold text-muze-dark text-lg leading-tight">{item.name}</Heading>
         {item.description && (
           <p className="text-sm text-muze-dark/60 mt-1 line-clamp-2">{item.description}</p>
         )}

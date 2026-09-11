@@ -12,6 +12,7 @@ import HeroSection from '../components/Menu/HeroSection';
 import PartnerCardsSection from '../components/Menu/PartnerCardsSection';
 import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
+import { groupMenuCategories } from '../utils/menuCategories';
 
 export default function MenuPage({ basePath = '/cafe' }) {
   const navigate = useNavigate();
@@ -108,12 +109,17 @@ export default function MenuPage({ basePath = '/cafe' }) {
     !searchQuery || item.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const groupedByCategory = categories
-    .map(cat => ({
-      ...cat,
-      items: filteredItems.filter(item => item.category_id === cat.id),
+  const groupedMenu = groupMenuCategories(categories)
+    .map(group => ({
+      ...group,
+      categories: group.categories
+        .map(category => ({
+          ...category,
+          items: filteredItems.filter(item => item.category_id === category.id),
+        }))
+        .filter(category => category.items.length > 0),
     }))
-    .filter(cat => cat.items.length > 0);
+    .filter(group => group.categories.length > 0);
 
   if (loading) {
     return (
@@ -230,20 +236,36 @@ export default function MenuPage({ basePath = '/cafe' }) {
               </section>
             )}
 
-            {groupedByCategory.map(cat => (
-            <section key={cat.id} id={`cat-${cat.id}`} className="mb-10 scroll-mt-32">
-              <div className="mb-4">
-                <h2 className="text-2xl font-bold text-muze-dark">{cat.name}</h2>
-                {cat.description && (
-                  <p className="text-sm text-muze-dark/60 mt-1">{cat.description}</p>
-                )}
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-                {cat.items.map((item, i) => (
-                  <MenuItemCard key={item.id} item={item} index={i} onClick={() => setSelectedItem(item)} />
+            {groupedMenu.map(group => (
+              <section key={group.id} aria-labelledby={`menu-heading-${group.id}`} className="mb-14">
+                <div className="mb-6 flex items-center gap-3">
+                  <span className="h-px flex-1 bg-muze-brown/20" aria-hidden="true" />
+                  <div className="text-center">
+                    <p className="text-[0.65rem] font-bold uppercase tracking-[0.2em] text-muze-brown/70">Menu</p>
+                    <h2 id={`menu-heading-${group.id}`} className="text-balance text-3xl font-black tracking-tight text-muze-dark">
+                      {group.label}
+                    </h2>
+                    <p className="text-pretty text-sm text-muze-dark/55">{group.description}</p>
+                  </div>
+                  <span className="h-px flex-1 bg-muze-brown/20" aria-hidden="true" />
+                </div>
+
+                {group.categories.map(category => (
+                  <section key={category.id} id={`cat-${category.id}`} className="mb-10 scroll-mt-32">
+                    <div className="mb-4">
+                      <h3 className="text-balance text-2xl font-bold text-muze-dark">{category.name}</h3>
+                      {category.description && (
+                        <p className="mt-1 text-pretty text-sm text-muze-dark/60">{category.description}</p>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 lg:grid-cols-3">
+                      {category.items.map((item, i) => (
+                        <MenuItemCard key={item.id} item={item} index={i} headingLevel={4} onClick={() => setSelectedItem(item)} />
+                      ))}
+                    </div>
+                  </section>
                 ))}
-              </div>
-            </section>
+              </section>
             ))}
 
             <PartnerCardsSection />
