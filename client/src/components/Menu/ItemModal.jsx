@@ -53,6 +53,15 @@ export default function ItemModal({ item, onClose }) {
     return basePrice + modifiersPrice;
   };
 
+  const requiredSelectionsComplete = !loading && modifierGroups.every(group => {
+    const minimum = Math.max(Number(group.min_selections) || 0, group.required ? 1 : 0);
+    if (minimum === 0) return true;
+    const selectedCount = selectedModifiers.filter(modifier => (
+      group.options?.some(option => option.id === modifier.id)
+    )).length;
+    return selectedCount >= minimum;
+  });
+
   const handleAddToCart = () => {
     addItem({
       id: item.id,
@@ -189,9 +198,14 @@ export default function ItemModal({ item, onClose }) {
             {/* Add to Cart */}
             <button
               onClick={handleAddToCart}
-              className="flex-1 py-4 px-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-base sm:text-lg hover:bg-muze-brown hover:text-white transition-colors shadow-md flex items-center justify-center gap-2"
+              disabled={!requiredSelectionsComplete}
+              className="flex-1 py-4 px-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-base sm:text-lg hover:bg-muze-brown hover:text-white transition-colors shadow-md flex items-center justify-center gap-2 disabled:bg-muze-dark/35 disabled:text-white disabled:cursor-not-allowed disabled:shadow-none"
             >
-              Add to Cart · {formatPriceFromDollars(calculateTotal())}
+              <span aria-live="polite">
+                {requiredSelectionsComplete
+                  ? `Add to Cart · ${formatPriceFromDollars(calculateTotal())}`
+                  : 'Choose required option'}
+              </span>
             </button>
           </div>
         </div>
