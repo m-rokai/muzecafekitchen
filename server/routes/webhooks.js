@@ -43,22 +43,24 @@ router.post('/square', express.raw({ type: 'application/json', limit: '512kb' })
   const eventId = payload.event_id;
   const eventType = payload.type || 'unknown';
   if (!eventId) return res.status(400).json({ message: 'Square event ID is required' });
+
+  let current = null;
+  let payment = null;
+  if (['payment.created', 'payment.updated'].includes(eventType)) {
+    payment = payload.data?.object?.payment;
+    // Payments created by this storefront always carry the order's public ID.
+    // Square also sends this application events from the physical register;
+    // acknowledge those immediately so they do not create retries or timeouts.
+    if (!payment?.reference_id) return res.json({ received: true, ignored: true });
+    current = await db.getOrderByPublicId(payment.reference_id);
+    if (!current) return res.json({ received: true, ignored: true });
+  }
+
   const claimed = await claim('square', eventId, eventType, req.body);
   if (!claimed.claimed) return res.json({ received: true, duplicate: true });
 
   try {
     if (['payment.created', 'payment.updated'].includes(eventType)) {
-      const payment = payload.data?.object?.payment;
-      const current = payment?.reference_id
-        ? await db.getOrderByPublicId(payment.reference_id)
-        : await db.getOrderByPaymentReference('square', payment?.id);
-      // A production Square application also receives events for payments made
-      // outside this storefront (for example, at the physical register). Those
-      // are valid events, but they do not belong to an online Muze order.
-      if (!current) {
-        await db.completePaymentWebhookEvent(claimed.event.id);
-        return res.json({ received: true, ignored: true });
-      }
       const updated = await db.setOrderPaymentState(current.id, {
         provider: 'square',
         status: squareStatus(payment.status),
