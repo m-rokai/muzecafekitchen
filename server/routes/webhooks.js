@@ -52,7 +52,13 @@ router.post('/square', express.raw({ type: 'application/json', limit: '512kb' })
       const current = payment?.reference_id
         ? await db.getOrderByPublicId(payment.reference_id)
         : await db.getOrderByPaymentReference('square', payment?.id);
-      if (!current) throw new Error('Square event does not reference a known order');
+      // A production Square application also receives events for payments made
+      // outside this storefront (for example, at the physical register). Those
+      // are valid events, but they do not belong to an online Muze order.
+      if (!current) {
+        await db.completePaymentWebhookEvent(claimed.event.id);
+        return res.json({ received: true, ignored: true });
+      }
       const updated = await db.setOrderPaymentState(current.id, {
         provider: 'square',
         status: squareStatus(payment.status),
