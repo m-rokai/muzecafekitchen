@@ -20,7 +20,7 @@ const FROM_EMAIL = FROM_ADDRESS ? `"${FROM_NAME}" <${FROM_ADDRESS}>` : null;
 const CAFE_NAME = process.env.CAFE_NAME || 'Muze Café';
 const PARTNER_NAME = 'Cuss Worthy Café';
 const COBRAND_NAME = `${PARTNER_NAME} at ${CAFE_NAME}`;
-const PUBLIC_SITE_URL = (process.env.PUBLIC_SITE_URL || 'https://muzecafe-kitchen-stage.vercel.app').replace(/\/$/, '');
+const PUBLIC_SITE_URL = (process.env.PUBLIC_SITE_URL || 'https://muzecafe.vercel.app').replace(/\/$/, '');
 const CUSS_WORTHY_WORDMARK_URL = `${PUBLIC_SITE_URL}/brand/cuss-worthy-wordmark.png`;
 const MUZE_LOGO_URL = `${PUBLIC_SITE_URL}/logo.png`;
 
