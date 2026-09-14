@@ -11,7 +11,8 @@
     "seed": "node scripts/seedSupabase.js",
     "staff:create": "node scripts/createStaffUser.js",
     "migrate:sqlite": "node scripts/migrateSqlite.js",
-    "catalog:square": "node scripts/syncSquareCatalog.js"
+    "catalog:square": "node scripts/syncSquareCatalog.js",
+    "campaign:reopening": "node scripts/sendReopeningCampaign.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.114.0",

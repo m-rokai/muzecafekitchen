@@ -5,6 +5,8 @@ import menuRoutes from './routes/menu.js';
 import orderRoutes from './routes/orders.js';
 import adminRoutes from './routes/admin.js';
 import webhookRoutes from './routes/webhooks.js';
+import emailPreferenceRoutes from './routes/emailPreferences.js';
+import marketingCampaignRoutes from './routes/marketingCampaign.js';
 import { checkDatabaseIntegrity } from './db/database.js';
 import { processPickupReminders } from './services/pickupReminder.js';
 import { isEmailConfigured } from './services/email.js';
@@ -55,6 +57,8 @@ app.use(express.json({ limit: '1mb' }));
 app.use('/api/menu', menuRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/email', emailPreferenceRoutes);
+app.use('/api/internal/marketing', marketingCampaignRoutes);
 
 app.get('/api/health', async (req, res) => {
   try {

@@ -5,7 +5,8 @@
   "outputDirectory": "client/dist",
   "functions": {
     "api/index.js": {
-      "maxDuration": 30
+      "maxDuration": 300,
+      "includeFiles": "server/emails/reopening-marketing.html"
     }
   },
   "rewrites": [
