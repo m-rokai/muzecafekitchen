@@ -12,6 +12,7 @@ import {
   validateSettingValue,
 } from '../validators/schemas.js';
 import { sanitizeText, sanitizeMenuItemName } from '../utils/sanitize.js';
+import { getAvailablePickupSlots, getCafeOrderingStatus } from '../lib/orderSchedule.js';
 
 const router = express.Router();
 const MENU_BUCKET = 'menu-images';
@@ -77,9 +78,21 @@ router.get('/public/announcement', async (req, res) => {
 
 router.get('/public/kitchen-status', async (req, res) => {
   try {
-    const open = await db.getSetting('kitchen_open') !== 'false';
+    const manualOpen = await db.getSetting('kitchen_open') !== 'false';
     const message = await db.getSetting('kitchen_closed_message') || '';
-    res.json({ open, message: open ? '' : message });
+    const schedule = getCafeOrderingStatus();
+    const open = manualOpen && schedule.acceptingOrders;
+    res.json({
+      open,
+      manualOpen,
+      message: open ? '' : (manualOpen ? schedule.message : message),
+      hours: {
+        timeZone: schedule.timeZone,
+        opensAt: schedule.opensAt,
+        closesAt: schedule.closesAt,
+      },
+      pickupSlots: open ? getAvailablePickupSlots() : [],
+    });
   } catch (error) {
     console.error('Error getting kitchen status:', error);
     res.status(500).json({ message: 'Failed to load kitchen status' });

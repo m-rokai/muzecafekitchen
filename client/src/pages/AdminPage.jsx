@@ -33,7 +33,7 @@ import {
   LayoutDashboard,
 } from 'lucide-react';
 import { adminAPI } from '../utils/api';
-import { formatPriceFromDollars } from '../utils/formatters';
+import { formatPacificPickupTime, formatPriceFromDollars } from '../utils/formatters';
 import StaffSignIn from '../components/StaffSignIn';
 import { useStaffAccess } from '../hooks/useStaffAccess';
 
@@ -1742,6 +1742,11 @@ function OrdersSection() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">
                         {formatDate(order.created_at)}
+                        {order.pickup_window_start && (
+                          <p className="font-medium text-muze-brown">
+                            Pickup {formatPacificPickupTime(order.pickup_window_start)}
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <button
@@ -1862,6 +1867,15 @@ function OrderDetailModal({ order, onClose }) {
               {order.status}
             </span>
           </div>
+
+          {order.pickup_window_start && (
+            <div className="mb-4 rounded-lg border border-muze-gold/30 bg-amber-50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Scheduled Pickup</p>
+              <p className="mt-1 font-bold text-muze-dark">
+                {formatPacificPickupTime(order.pickup_window_start)}
+              </p>
+            </div>
+          )}
 
           {/* Order Items */}
           <div className="mb-4">

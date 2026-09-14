@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { formatPartnerDeadline, formatPartnerDeliveryDate } from '../lib/partnerSchedule.js';
+import { formatPacificPickupTime } from '../lib/orderSchedule.js';
 
 // Initialize Gmail SMTP transporter using a Workspace mailbox app password.
 // No DNS changes needed — Workspace already signs muzeoffice.com mail with SPF + DKIM.
@@ -17,6 +18,7 @@ const transporter = process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD
 const FROM_NAME = process.env.GMAIL_FROM_NAME || 'Cuss Worthy Café at Muze';
 const FROM_ADDRESS = process.env.GMAIL_USER;
 const FROM_EMAIL = FROM_ADDRESS ? `"${FROM_NAME}" <${FROM_ADDRESS}>` : null;
+const ORDER_RECORDS_EMAIL = process.env.ORDER_RECORDS_EMAIL || 'order@cussworthy.cafe';
 const CAFE_NAME = process.env.CAFE_NAME || 'Muze Café';
 const PARTNER_NAME = 'Cuss Worthy Café';
 const COBRAND_NAME = `${PARTNER_NAME} at ${CAFE_NAME}`;
@@ -88,11 +90,17 @@ function preorderReceiptDetails(order) {
   return delivery && deadline ? { delivery, deadline } : null;
 }
 
+function scheduledPickupDetails(order) {
+  if (order.channel !== 'cafe' || !order.pickup_window_start) return null;
+  return formatPacificPickupTime(order.pickup_window_start);
+}
+
 /**
  * Generate co-branded order confirmation email HTML
  */
 export function generateConfirmationEmail(order) {
   const preorder = preorderReceiptDetails(order);
+  const scheduledPickup = scheduledPickupDetails(order);
   const taxIncluded = order.channel === 'partner_meal';
   const itemsHtml = order.items.map(item => `
     <tr>
@@ -141,6 +149,15 @@ export function generateConfirmationEmail(order) {
             <p style="margin: 0 0 6px 0; font-size: 16px;"><strong>Delivered to Muze for pickup:</strong> ${escapeHtml(preorder.delivery)}</p>
             <p style="margin: 0; font-size: 14px;"><strong>Ordering deadline:</strong> ${escapeHtml(preorder.deadline)}</p>
             <p style="margin: 8px 0 0 0; font-size: 14px;"><strong>Flat price:</strong> Listed meal prices include Nevada sales tax.</p>
+          </div>
+        </div>` : ''}
+
+        ${scheduledPickup ? `
+        <!-- Scheduled café pickup -->
+        <div style="padding: 0 32px 24px 32px;">
+          <div style="background: #FFF3CD; border: 2px solid ${COLORS.gold}; border-radius: 12px; padding: 20px; color: ${COLORS.dark}; text-align: center;">
+            <p style="margin: 0 0 7px 0; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px;">Scheduled pickup</p>
+            <p style="margin: 0; font-size: 22px; font-weight: 800;">${escapeHtml(scheduledPickup)}</p>
           </div>
         </div>` : ''}
 
@@ -198,6 +215,7 @@ export function generateConfirmationEmail(order) {
 
 export function generateConfirmationText(order) {
   const preorder = preorderReceiptDetails(order);
+  const scheduledPickup = scheduledPickupDetails(order);
   const taxIncluded = order.channel === 'partner_meal';
   const lines = [
     `${COBRAND_NAME} — ${preorder ? 'Weekly meal pre-order confirmed' : 'Order confirmed'}`,
@@ -211,6 +229,7 @@ export function generateConfirmationText(order) {
       'Listed meal prices include Nevada sales tax.',
     );
   }
+  if (scheduledPickup) lines.push(`Scheduled pickup: ${scheduledPickup}`);
   lines.push('', ...order.items.map(item => `${Number(item.quantity)}x ${item.item_name} — ${formatPrice(item.total_price)}`));
   lines.push(
     '',
@@ -293,6 +312,7 @@ export async function sendOrderConfirmation(order) {
     const info = await transporter.sendMail({
       from: FROM_EMAIL,
       to: order.email,
+      bcc: ORDER_RECORDS_EMAIL,
       subject: preorder
         ? `Weekly meal pre-order #${formatPickupNumber(order.pickup_number)} confirmed · ${COBRAND_NAME}`
         : `Order #${formatPickupNumber(order.pickup_number)} Confirmed · ${COBRAND_NAME}`,

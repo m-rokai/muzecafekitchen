@@ -20,6 +20,7 @@ const OrderCreationSchema = z.object({
   email: z.string().trim().email('A valid email is required').max(254),
   channel: z.literal('cafe'),
   paymentSourceToken: z.string().min(1).max(2048).optional(),
+  pickupAt: z.string().datetime({ offset: true }).nullable().optional(),
   items: z.array(OrderItemSchema).min(1, 'Order must have at least one item').max(50),
   notes: z.string().max(500).optional(),
 });

@@ -40,3 +40,18 @@ test('customer receipts include the Cuss Worthy and Muze co-brand', () => {
     assert.match(receipt, /Muze/);
   }
 });
+
+test('scheduled café receipts show the Pacific pickup time', () => {
+  const scheduledOrder = {
+    ...order,
+    channel: 'cafe',
+    pickup_window_start: '2026-09-14T18:30:00.000Z',
+  };
+  for (const receipt of [
+    generateConfirmationEmail(scheduledOrder),
+    generateConfirmationText(scheduledOrder),
+  ]) {
+    assert.match(receipt, /Scheduled pickup/i);
+    assert.match(receipt, /11:30 AM PDT/);
+  }
+});

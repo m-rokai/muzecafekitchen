@@ -1,6 +1,6 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, User, Mail, AlertCircle, Loader2, Lock } from 'lucide-react';
+import { ArrowLeft, User, Mail, AlertCircle, CalendarClock, Loader2, Lock } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { orderAPI, settingsAPI } from '../utils/api';
 import { formatPriceFromDollars } from '../utils/formatters';
@@ -15,6 +15,10 @@ function newCheckoutKey(prefix) {
   return typeof globalThis.crypto?.randomUUID === 'function'
     ? globalThis.crypto.randomUUID()
     : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function currentTimestamp() {
+  return Date.now();
 }
 
 function readStoredCheckoutAttempt() {
@@ -50,7 +54,13 @@ export default function CheckoutPage() {
       : null
   ));
   const [taxRate, setTaxRate] = useState(0.0825);
-  const [kitchenStatus, setKitchenStatus] = useState({ open: true, message: '' });
+  const [kitchenStatus, setKitchenStatus] = useState({
+    open: true,
+    message: '',
+    pickupSlots: [],
+    hours: { opensAt: '8:00 AM', closesAt: '2:00 PM', timeZone: 'America/Los_Angeles' },
+  });
+  const [pickupAt, setPickupAt] = useState('');
   const [squareReady, setSquareReady] = useState(false);
   const orderSubmittedRef = useRef(false);
   const idempotencyKeyRef = useRef(null);
@@ -64,7 +74,17 @@ export default function CheckoutPage() {
 
   useEffect(() => {
     settingsAPI.getTaxRate().then(rate => setTaxRate(rate)).catch(() => {});
-    settingsAPI.getKitchenStatus().then(setKitchenStatus).catch(() => {});
+    const refreshKitchenStatus = () => settingsAPI.getKitchenStatus()
+      .then(status => {
+        setKitchenStatus(status);
+        setPickupAt(current => (
+          current && !status.pickupSlots?.some(slot => slot.value === current) ? '' : current
+        ));
+      })
+      .catch(() => {});
+    refreshKitchenStatus();
+    const interval = window.setInterval(refreshKitchenStatus, 60_000);
+    return () => window.clearInterval(interval);
   }, []);
 
   const { subtotal, tax, total } = calculateOrderTotals(cartTotal, taxRate);
@@ -94,6 +114,7 @@ export default function CheckoutPage() {
         customerName: name.trim(),
         email: email.trim(),
         channel,
+        pickupAt: pickupAt || null,
         items: items.map(item => ({
           menu_item_id: item.id,
           quantity: item.quantity,
@@ -157,7 +178,7 @@ export default function CheckoutPage() {
       localStorage.setItem(`muze_last_order_${channel}`, JSON.stringify({
         orderId: result.id,
         pickupNumber: result.pickup_number,
-        timestamp: Date.now(),
+        timestamp: currentTimestamp(),
       }));
       storeCheckoutAttempt(null);
       clearCart();
@@ -180,6 +201,10 @@ export default function CheckoutPage() {
         paymentAttemptKeyRef.current = null;
         squareTokenRef.current = null;
         storeCheckoutAttempt(null);
+      }
+      if (['ORDERING_CLOSED', 'PICKUP_TIME_UNAVAILABLE'].includes(err.code)) {
+        setPickupAt('');
+        settingsAPI.getKitchenStatus().then(setKitchenStatus).catch(() => {});
       }
       setError(err.message || 'Failed to place order. Please try again.');
     } finally {
@@ -263,6 +288,35 @@ export default function CheckoutPage() {
               className="w-full px-4 py-4 rounded-xl border-2 border-gray-200 focus:border-muze-gold focus:outline-none transition-colors text-lg"
               disabled={loading}
             />
+          </div>
+
+          {/* Pickup timing */}
+          <div className="rounded-2xl bg-white border border-muze-gold/20 shadow-sm p-6 mb-5">
+            <h3 className="font-bold text-muze-dark text-lg mb-1 flex items-center gap-2">
+              <CalendarClock className="w-5 h-5 text-muze-brown" />
+              Pickup Time
+            </h3>
+            <p className="text-sm text-muze-dark/60 mb-4">
+              Choose ASAP or schedule pickup later today. Orders are accepted from 8:00 AM to 2:00 PM Pacific.
+            </p>
+            <label htmlFor="pickup-time" className="sr-only">Pickup time</label>
+            <select
+              id="pickup-time"
+              value={pickupAt}
+              onChange={(event) => setPickupAt(event.target.value)}
+              className="w-full px-4 py-4 rounded-xl border-2 border-gray-200 bg-white focus:border-muze-gold focus:outline-none transition-colors text-lg"
+              disabled={loading || !kitchenStatus.open}
+            >
+              <option value="">As soon as possible (about 10-15 minutes)</option>
+              {(kitchenStatus.pickupSlots || []).map(slot => (
+                <option key={slot.value} value={slot.value}>Schedule for {slot.label}</option>
+              ))}
+            </select>
+            {kitchenStatus.open && (kitchenStatus.pickupSlots || []).length === 0 && (
+              <p className="mt-3 text-sm text-muze-dark/55">
+                No later time slots remain today, but ASAP ordering is still available until 2:00 PM.
+              </p>
+            )}
           </div>
 
           <SquareCardField onReady={handleSquareReady} />

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { SquareClient, SquareEnvironment, WebhooksHelper } from 'square';
+import { formatPacificPickupTime } from '../lib/orderSchedule.js';
 
 export const PAYMENT_PROVIDERS = Object.freeze(['square']);
 export const PAYMENT_STATUSES = Object.freeze([
@@ -87,6 +88,16 @@ export function squareStatus(status) {
   }
 }
 
+export function squarePaymentNote(order) {
+  const pickupNumber = String(order.pickup_number).padStart(3, '0');
+  const scheduledPickup = order.pickup_window_start
+    ? formatPacificPickupTime(order.pickup_window_start)
+    : null;
+  return scheduledPickup
+    ? `Muze Café pickup #${pickupNumber} · Scheduled ${scheduledPickup}`
+    : `Muze Café pickup #${pickupNumber} · ASAP`;
+}
+
 async function createSquarePayment({ order, sourceToken, idempotencyKey }) {
   if (!sourceToken) {
     const error = new PaymentProcessingError('Square payment details are required', 'square');
@@ -102,7 +113,7 @@ async function createSquarePayment({ order, sourceToken, idempotencyKey }) {
       locationId: process.env.SQUARE_LOCATION_ID.trim(),
       referenceId: order.public_id,
       buyerEmailAddress: order.email,
-      note: `Muze Café pickup #${String(order.pickup_number).padStart(3, '0')}`,
+      note: squarePaymentNote(order),
     });
     const payment = response.payment;
     if (!payment?.id) throw new Error('Square did not return a payment reference');

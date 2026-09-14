@@ -45,6 +45,7 @@ export function normalizeOrderRequest(order) {
     customerName: order.customerName,
     email: order.email,
     channel: order.channel,
+    pickupAt: order.pickupAt || null,
     notes: order.notes || null,
     items: order.items.map(item => ({
       menu_item_id: item.menu_item_id,

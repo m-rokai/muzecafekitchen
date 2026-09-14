@@ -107,6 +107,7 @@ export function sanitizeOrderData(orderData) {
     paymentSourceToken: typeof orderData.paymentSourceToken === 'string'
       ? orderData.paymentSourceToken.trim().substring(0, 2048)
       : null,
+    pickupAt: typeof orderData.pickupAt === 'string' ? orderData.pickupAt : null,
     notes: sanitizeText(orderData.notes),
     items: (orderData.items || []).map(item => ({
       menu_item_id: item.menu_item_id ? sanitizeInteger(item.menu_item_id, 1) : null,

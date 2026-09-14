@@ -42,3 +42,14 @@ export function formatDate(dateString) {
 export function formatPickupNumber(num) {
   return `#${String(num).padStart(3, '0')}`;
 }
+
+export function formatPacificPickupTime(dateString) {
+  const date = new Date(dateString);
+  if (!Number.isFinite(date.getTime())) return '';
+  return date.toLocaleTimeString('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}

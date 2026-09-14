@@ -66,6 +66,12 @@ test('prices menu and modifiers from database cents, ignoring client money field
   assert.equal(pricing.normalized.items[0].unit_price, undefined);
 });
 
+test('includes the requested pickup time in the canonical idempotency payload', async () => {
+  const pickupAt = '2026-09-14T18:30:00.000Z';
+  const pricing = await validateAndPriceOrder(makeOrder({ pickupAt }), makeDb());
+  assert.equal(pricing.normalized.pickupAt, pickupAt);
+});
+
 test('rejects unavailable menu items and modifiers not linked to the item', async () => {
   await assert.rejects(
     validateAndPriceOrder(makeOrder(), makeDb({ item: { available: 0 } })),

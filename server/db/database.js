@@ -524,6 +524,8 @@ export async function createOrderWithItems({
           payment_provider: paymentProvider,
           preorder_deadline: preorderDeadline,
           preorder_delivery_date: preorderDeliveryDate,
+          pickup_window_start: pickupWindowStart,
+          pickup_window_end: pickupWindowEnd,
         })}
       )
     `;

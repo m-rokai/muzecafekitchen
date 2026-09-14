@@ -2,7 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CheckCircle, Clock, Coffee, ArrowLeft, Loader2, Laptop, XCircle } from 'lucide-react';
 import { orderAPI } from '../utils/api';
-import { formatPriceFromDollars, formatPickupNumber, formatTime } from '../utils/formatters';
+import {
+  formatPacificPickupTime,
+  formatPriceFromDollars,
+  formatPickupNumber,
+  formatTime,
+} from '../utils/formatters';
 import GradientMesh from '../components/glass/GradientMesh';
 import GlassPanel from '../components/glass/GlassPanel';
 import CancelReasonModal from '../components/CancelReasonModal';
@@ -88,6 +93,9 @@ export default function ConfirmationPage() {
     cancelled:  { icon: XCircle,     color: 'text-red-600',    bg: 'bg-red-100',       label: 'Cancelled',       description: 'This order was cancelled. You weren\'t charged.' },
   };
   const paymentConfirmed = ['paid', 'authorized'].includes(order.payment_status);
+  const scheduledPickup = order.pickup_window_start
+    ? formatPacificPickupTime(order.pickup_window_start)
+    : null;
   const status = paymentConfirmed
     ? (statusConfig[order.status] || statusConfig.pending)
     : {
@@ -207,8 +215,10 @@ export default function ConfirmationPage() {
         {isCafeOrder && <div className="grid grid-cols-2 gap-3 mt-4">
           <div className="rounded-2xl bg-white/85 border border-white/70 p-4 text-center">
             <Clock className="w-6 h-6 text-muze-brown mx-auto mb-2" strokeWidth={1.8} />
-            <p className="text-xs text-muze-dark/60 uppercase tracking-wider">Estimated Wait</p>
-            <p className="font-bold text-muze-dark mt-1">10–15 mins</p>
+            <p className="text-xs text-muze-dark/60 uppercase tracking-wider">
+              {scheduledPickup ? 'Scheduled Pickup' : 'Estimated Wait'}
+            </p>
+            <p className="font-bold text-muze-dark mt-1">{scheduledPickup || '10–15 mins'}</p>
           </div>
           <div className="rounded-2xl bg-white/85 border border-white/70 p-4 text-center">
             <Coffee className="w-6 h-6 text-muze-brown mx-auto mb-2" strokeWidth={1.8} />

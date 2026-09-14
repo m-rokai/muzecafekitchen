@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, ChefHat, CheckCircle, Bell, Volume2, VolumeX, RefreshCw, LogOut, Lock, Unlock, X } from 'lucide-react';
 import { orderAPI, adminAPI } from '../utils/api';
 import { supabase } from '../lib/supabase';
-import { formatPickupNumber, formatTimeSince } from '../utils/formatters';
+import { formatPacificPickupTime, formatPickupNumber, formatTimeSince } from '../utils/formatters';
 import StaffSignIn from '../components/StaffSignIn';
 import { useStaffAccess } from '../hooks/useStaffAccess';
 import CancelReasonModal from '../components/CancelReasonModal';
@@ -186,7 +186,11 @@ export default function KitchenDisplay() {
   }
 
   // Sort orders by created_at (oldest first) within each status group
-  const sortByTime = (a, b) => new Date(a.created_at) - new Date(b.created_at);
+  const sortByTime = (a, b) => {
+    const aTime = a.pickup_window_start || a.created_at;
+    const bTime = b.pickup_window_start || b.created_at;
+    return new Date(aTime) - new Date(bTime);
+  };
 
   const pendingOrders = orders.filter(o => o.status === 'pending').sort(sortByTime);
   const preparingOrders = orders.filter(o => o.status === 'preparing').sort(sortByTime);
@@ -480,6 +484,11 @@ function OrderCard({ order, onStart, onComplete, onPickup, onCancel, isUpdating 
           <p className="text-lg text-white/70">{order.customer_name}</p>
         </div>
         <div className="text-right">
+          {order.pickup_window_start && (
+            <p className="mb-1 text-sm font-bold text-muze-gold">
+              Pickup {formatPacificPickupTime(order.pickup_window_start)}
+            </p>
+          )}
           <div className="flex items-center gap-1 text-white/50">
             <Clock className="w-4 h-4" />
             <span className="text-sm">{timeSince}</span>

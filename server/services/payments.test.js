@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   providerForChannel,
   providerIdempotencyKey,
+  squarePaymentNote,
   squareStatus,
 } from './payments.js';
 
@@ -26,4 +27,12 @@ test('creates deterministic Square-compatible idempotency keys', () => {
   assert.notEqual(first, nextAttempt);
   assert.match(first, /^[A-Za-z0-9_-]+$/);
   assert.ok(first.length <= 45);
+});
+
+test('marks scheduled and ASAP pickup timing in the Square payment record', () => {
+  assert.equal(
+    squarePaymentNote({ pickup_number: 7, pickup_window_start: '2026-09-14T18:30:00.000Z' }),
+    'Muze Café pickup #007 · Scheduled 11:30 AM PDT',
+  );
+  assert.equal(squarePaymentNote({ pickup_number: 8 }), 'Muze Café pickup #008 · ASAP');
 });

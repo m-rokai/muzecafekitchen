@@ -28,6 +28,7 @@ import {
   PaymentProviderNotConfiguredError,
   providerIdempotencyKey,
 } from '../services/payments.js';
+import { CafeScheduleError, resolveCafePickupWindow } from '../lib/orderSchedule.js';
 
 const router = express.Router();
 const PUBLIC_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -88,6 +89,7 @@ router.post('/', rejectRetiredStorefront, orderRateLimit, requireCustomerIdentit
     if (!sanitized.customerName || !sanitized.email || !sanitized.channel || sanitized.items.length === 0) {
       return res.status(400).json({ message: 'Customer name, email, storefront, and items are required' });
     }
+    const pickupWindow = resolveCafePickupWindow(sanitized.pickupAt);
     const provider = assertProviderConfigured(sanitized.channel);
 
     const idempotencyKey = req.get('Idempotency-Key');
@@ -156,6 +158,8 @@ router.post('/', rejectRetiredStorefront, orderRateLimit, requireCustomerIdentit
         items: pricing.items,
         actorSubject: req.customerIdentity.subject,
         channel: sanitized.channel,
+        pickupWindowStart: pickupWindow.pickupWindowStart,
+        pickupWindowEnd: pickupWindow.pickupWindowEnd,
         paymentStatus: 'pending',
         paymentMethod: provider,
         paymentProvider: provider,
@@ -190,7 +194,11 @@ router.post('/', rejectRetiredStorefront, orderRateLimit, requireCustomerIdentit
       provider,
       idempotencyKey: paymentIdempotencyKey,
       amountCents: created.order.total_cents,
-      metadata: { order_public_id: created.public_id, channel: sanitized.channel },
+      metadata: {
+        order_public_id: created.public_id,
+        channel: sanitized.channel,
+        pickup_at: created.order.pickup_window_start,
+      },
     });
     let checkout;
     try {
@@ -231,6 +239,8 @@ router.post('/', rejectRetiredStorefront, orderRateLimit, requireCustomerIdentit
       id: created.public_id,
       public_id: created.public_id,
       pickup_number: created.pickup_number,
+      pickup_window_start: created.order.pickup_window_start,
+      pickup_window_end: created.order.pickup_window_end,
       payment_status: created.order.payment_status,
       payment_provider: provider,
       checkout_url: checkout.checkoutUrl,
@@ -244,6 +254,9 @@ router.post('/', rejectRetiredStorefront, orderRateLimit, requireCustomerIdentit
         code: err.code,
         errors: err.details,
       });
+    }
+    if (err instanceof CafeScheduleError) {
+      return res.status(err.status).json({ message: err.message, code: err.code });
     }
     if (err instanceof PaymentProviderNotConfiguredError || err instanceof PaymentProcessingError) {
       return res.status(err.status || 503).json({
