@@ -202,7 +202,7 @@ export default function CheckoutPage() {
         squareTokenRef.current = null;
         storeCheckoutAttempt(null);
       }
-      if (['ORDERING_CLOSED', 'PICKUP_TIME_UNAVAILABLE'].includes(err.code)) {
+      if (['ORDERING_CLOSED', 'PICKUP_TIME_UNAVAILABLE', 'PICKUP_SLOT_FULL'].includes(err.code)) {
         setPickupAt('');
         settingsAPI.getKitchenStatus().then(setKitchenStatus).catch(() => {});
       }

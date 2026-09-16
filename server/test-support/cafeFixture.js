@@ -62,6 +62,8 @@ export const database = {
   getModifierOptions: async () => copy(modifierGroups[0].options),
   getAllModifierOptions: async () => copy(modifierGroups[0].options),
   getActiveOrders: async channel => { record('getActiveOrders', [channel]); return []; },
+  getPickupSlotCounts: async () => ({}),
+  renewPickupSlotReservation: async () => {},
   getTodayOrderCount: async () => 0,
   getTodayRevenue: async () => 0,
   getOrderByPublicId: async id => id === historicalOrder.public_id ? copy(historicalOrder) : null,

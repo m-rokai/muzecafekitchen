@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   CafeScheduleError,
+  filterAvailablePickupSlots,
   getAvailablePickupSlots,
   getCafeOrderingStatus,
   resolveCafePickupWindow,
@@ -13,6 +14,20 @@ test('accepts order submissions only from 8 AM until 2 PM Pacific across DST', (
   assert.equal(getCafeOrderingStatus('2026-01-15T22:00:00Z').acceptingOrders, false);
   assert.equal(getCafeOrderingStatus('2026-07-15T15:00:00Z').acceptingOrders, true);
   assert.equal(getCafeOrderingStatus('2026-07-15T21:00:00Z').acceptingOrders, false);
+});
+
+test('removes scheduled pickup slots after seven customer reservations', () => {
+  const slots = [
+    { value: '2026-09-14T17:30:00.000Z', label: '10:30 AM PDT' },
+    { value: '2026-09-14T17:45:00.000Z', label: '10:45 AM PDT' },
+  ];
+  assert.deepEqual(filterAvailablePickupSlots(slots, {
+    '2026-09-14T17:30:00.000Z': 7,
+    '2026-09-14T17:45:00.000Z': 6,
+  }), [{
+    ...slots[1],
+    remaining: 1,
+  }]);
 });
 
 test('offers same-day quarter-hour pickup slots with a 15-minute lead', () => {

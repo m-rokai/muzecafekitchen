@@ -3,6 +3,7 @@ export const CAFE_OPEN_MINUTE = 8 * 60;
 export const CAFE_CLOSE_MINUTE = 14 * 60;
 export const PICKUP_SLOT_MINUTES = 15;
 export const PICKUP_LEAD_MINUTES = 15;
+export const PICKUP_SLOT_CAPACITY = 7;
 
 const PACIFIC_PARTS = new Intl.DateTimeFormat('en-CA', {
   timeZone: CAFE_TIME_ZONE,
@@ -91,6 +92,15 @@ export function getAvailablePickupSlots(now = new Date()) {
     }
   }
   return slots;
+}
+
+export function filterAvailablePickupSlots(slots, counts = {}) {
+  return slots
+    .filter(slot => Number(counts[slot.value] || 0) < PICKUP_SLOT_CAPACITY)
+    .map(slot => ({
+      ...slot,
+      remaining: PICKUP_SLOT_CAPACITY - Number(counts[slot.value] || 0),
+    }));
 }
 
 export function resolveCafePickupWindow(pickupAt, now = new Date()) {

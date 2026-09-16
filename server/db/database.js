@@ -1,4 +1,5 @@
 import { getSql } from './postgres.js';
+import { PICKUP_SLOT_CAPACITY } from '../lib/orderSchedule.js';
 
 export function dollarsToCents(value) {
   const amount = Number(value);
@@ -18,6 +19,15 @@ export const LEGAL_STATUS_TRANSITIONS = Object.freeze({
   preparing: 'ready',
   ready: 'completed',
 });
+
+export class PickupSlotCapacityError extends Error {
+  constructor() {
+    super('That pickup time just filled up. Please choose another available time.');
+    this.name = 'PickupSlotCapacityError';
+    this.code = 'PICKUP_SLOT_FULL';
+    this.status = 409;
+  }
+}
 
 export function isPaymentFulfillmentEligible(order) {
   const status = String(order?.payment_status || '').toLowerCase();
@@ -411,6 +421,64 @@ export async function getActiveOrders(channel = 'cafe') {
   return hydrateOrders(sql, rows);
 }
 
+export async function getPickupSlotCounts(slotStarts = []) {
+  if (!Array.isArray(slotStarts) || slotStarts.length === 0) return {};
+  const sql = getSql();
+  const rows = await sql`
+    select pickup_window_start, count(*)::integer as reservation_count
+    from public.orders
+    where channel = 'cafe'
+      and pickup_window_start in ${sql(slotStarts)}
+      and status <> 'cancelled'
+      and (
+        payment_status in ('authorized', 'paid')
+        or (
+          payment_status = 'pending'
+          and coalesce(payment_updated_at, created_at) >= now() - interval '10 minutes'
+        )
+      )
+    group by pickup_window_start
+  `;
+  return Object.fromEntries(rows.map(row => [
+    new Date(row.pickup_window_start).toISOString(),
+    Number(row.reservation_count),
+  ]));
+}
+
+export async function renewPickupSlotReservation(orderId) {
+  const sql = getSql();
+  return sql.begin(async tx => {
+    const [order] = await tx`
+      select id, pickup_window_start, payment_status
+      from public.orders where id = ${orderId} for update
+    `;
+    if (!order?.pickup_window_start || ['authorized', 'paid'].includes(order.payment_status)) {
+      return;
+    }
+    const pickupWindowStart = new Date(order.pickup_window_start).toISOString();
+    await tx`select pg_advisory_xact_lock(hashtextextended(${pickupWindowStart}, 0))`;
+    const [capacity] = await tx`
+      select count(*)::integer as reservation_count
+      from public.orders
+      where channel = 'cafe'
+        and pickup_window_start = ${pickupWindowStart}
+        and id <> ${order.id}
+        and status <> 'cancelled'
+        and (
+          payment_status in ('authorized', 'paid')
+          or (
+            payment_status = 'pending'
+            and coalesce(payment_updated_at, created_at) >= now() - interval '10 minutes'
+          )
+        )
+    `;
+    if (Number(capacity.reservation_count) >= PICKUP_SLOT_CAPACITY) {
+      throw new PickupSlotCapacityError();
+    }
+    await tx`update public.orders set payment_updated_at = now() where id = ${order.id}`;
+  });
+}
+
 export async function getOrderByPublicId(publicId) {
   const [row] = await getSql()`select id from public.orders where public_id = ${publicId}`;
   return row ? loadOrderByInternalId(row.id) : null;
@@ -466,6 +534,26 @@ export async function createOrderWithItems({
 }) {
   const sql = getSql();
   return sql.begin(async tx => {
+    if (pickupWindowStart) {
+      await tx`select pg_advisory_xact_lock(hashtextextended(${pickupWindowStart}, 0))`;
+      const [capacity] = await tx`
+        select count(*)::integer as reservation_count
+        from public.orders
+        where channel = 'cafe'
+          and pickup_window_start = ${pickupWindowStart}
+          and status <> 'cancelled'
+          and (
+            payment_status in ('authorized', 'paid')
+            or (
+              payment_status = 'pending'
+              and coalesce(payment_updated_at, created_at) >= now() - interval '10 minutes'
+            )
+          )
+      `;
+      if (Number(capacity.reservation_count) >= PICKUP_SLOT_CAPACITY) {
+        throw new PickupSlotCapacityError();
+      }
+    }
     const [counter] = await tx`
       insert into private.pickup_counters (service_date, current_number)
       values (current_date, 1)

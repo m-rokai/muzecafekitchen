@@ -12,7 +12,12 @@ import {
   validateSettingValue,
 } from '../validators/schemas.js';
 import { sanitizeText, sanitizeMenuItemName } from '../utils/sanitize.js';
-import { getAvailablePickupSlots, getCafeOrderingStatus } from '../lib/orderSchedule.js';
+import {
+  filterAvailablePickupSlots,
+  getAvailablePickupSlots,
+  getCafeOrderingStatus,
+  PICKUP_SLOT_CAPACITY,
+} from '../lib/orderSchedule.js';
 
 const router = express.Router();
 const MENU_BUCKET = 'menu-images';
@@ -80,8 +85,11 @@ router.get('/public/kitchen-status', async (req, res) => {
   try {
     const manualOpen = await db.getSetting('kitchen_open') !== 'false';
     const message = await db.getSetting('kitchen_closed_message') || '';
-    const schedule = getCafeOrderingStatus();
+    const now = new Date();
+    const schedule = getCafeOrderingStatus(now);
     const open = manualOpen && schedule.acceptingOrders;
+    const candidateSlots = open ? getAvailablePickupSlots(now) : [];
+    const slotCounts = await db.getPickupSlotCounts(candidateSlots.map(slot => slot.value));
     res.json({
       open,
       manualOpen,
@@ -91,7 +99,8 @@ router.get('/public/kitchen-status', async (req, res) => {
         opensAt: schedule.opensAt,
         closesAt: schedule.closesAt,
       },
-      pickupSlots: open ? getAvailablePickupSlots() : [],
+      pickupSlotCapacity: PICKUP_SLOT_CAPACITY,
+      pickupSlots: filterAvailablePickupSlots(candidateSlots, slotCounts),
     });
   } catch (error) {
     console.error('Error getting kitchen status:', error);

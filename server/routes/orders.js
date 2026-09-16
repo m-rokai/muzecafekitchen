@@ -130,8 +130,9 @@ router.post('/', rejectRetiredStorefront, orderRateLimit, requireCustomerIdentit
       });
     }
     if (existing) {
-      // Continue below with the same provider idempotency key so an interrupted
-      // checkout can be resumed without creating or charging another order.
+      // Renew this order's short-lived capacity reservation before retrying so
+      // an interrupted checkout cannot become an eighth order for the slot.
+      await db.renewPickupSlotReservation(existing.id);
     }
 
     const pricing = existing ? null : await validateAndPriceOrder(sanitized, db);
@@ -226,12 +227,21 @@ router.post('/', rejectRetiredStorefront, orderRateLimit, requireCustomerIdentit
         await sendOrderConfirmation(created.order);
       }
     } catch (error) {
+      const failedStatus = error instanceof PaymentProviderNotConfiguredError || error.status >= 500
+        ? 'pending'
+        : 'failed';
       await db.updatePaymentAttempt(attempt.id, {
-        status: error instanceof PaymentProviderNotConfiguredError || error.status >= 500
-          ? 'pending'
-          : 'failed',
+        status: failedStatus,
         metadata: { error_code: error.code || 'PAYMENT_ERROR' },
       });
+      if (failedStatus === 'failed') {
+        await db.setOrderPaymentState(created.id, {
+          provider,
+          status: 'failed',
+          paymentId: attempt.id,
+          metadata: { error_code: error.code || 'PAYMENT_ERROR' },
+        });
+      }
       throw error;
     }
 
@@ -256,6 +266,9 @@ router.post('/', rejectRetiredStorefront, orderRateLimit, requireCustomerIdentit
       });
     }
     if (err instanceof CafeScheduleError) {
+      return res.status(err.status).json({ message: err.message, code: err.code });
+    }
+    if (err instanceof db.PickupSlotCapacityError) {
       return res.status(err.status).json({ message: err.message, code: err.code });
     }
     if (err instanceof PaymentProviderNotConfiguredError || err instanceof PaymentProcessingError) {
