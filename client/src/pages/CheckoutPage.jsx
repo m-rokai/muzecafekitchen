@@ -95,35 +95,56 @@ export default function CheckoutPage() {
     }
   }, [basePath, items.length, navigate]);
 
-  const handleSubmit = async (e) => {
-    e?.preventDefault?.();
-    if (loading) return;
-    setLoading(true);
-    setError(null);
+  const paymentDisabled = loading
+    || !name.trim()
+    || !email.trim()
+    || items.length === 0
+    || !kitchenStatus.open;
 
-    if (!name.trim()) { setError('Please enter your name'); setLoading(false); return; }
-    if (!email.trim()) { setError('Please enter your email'); setLoading(false); return; }
-    if (items.length === 0) { setError('Your cart is empty'); setLoading(false); return; }
-    if (!kitchenStatus.open) {
-      setError(kitchenStatus.message || 'Online ordering is paused. Please try again soon.');
-      setLoading(false);
-      return;
+  const orderDataForCheckout = () => ({
+    customerName: name.trim(),
+    email: email.trim(),
+    channel,
+    pickupAt: pickupAt || null,
+    items: items.map(item => ({
+      menu_item_id: item.id,
+      quantity: item.quantity,
+      special_instructions: item.specialInstructions || null,
+      modifiers: item.modifiers?.map(mod => ({
+        modifier_option_id: mod.id,
+      })) || [],
+    })),
+  });
+
+  const handleOrderError = (err) => {
+    console.error('Order failed:', err);
+    if (err.status === 402) {
+      paymentAttemptKeyRef.current = newCheckoutKey('payment');
+      squareTokenRef.current = null;
+      const stored = readStoredCheckoutAttempt();
+      if (stored?.requestSignature && idempotencyKeyRef.current) {
+        storeCheckoutAttempt({
+          ...stored,
+          idempotencyKey: idempotencyKeyRef.current,
+          paymentAttemptKey: paymentAttemptKeyRef.current,
+        });
+      }
+    } else if (err.status === 409) {
+      idempotencyKeyRef.current = null;
+      paymentAttemptKeyRef.current = null;
+      squareTokenRef.current = null;
+      storeCheckoutAttempt(null);
     }
+    if (['ORDERING_CLOSED', 'PICKUP_TIME_UNAVAILABLE', 'PICKUP_SLOT_FULL'].includes(err.code)) {
+      setPickupAt('');
+      settingsAPI.getKitchenStatus().then(setKitchenStatus).catch(() => {});
+    }
+    setError(err.message || 'Failed to place order. Please try again.');
+  };
+
+  const submitOrderWithToken = async (paymentToken) => {
     try {
-      const orderData = {
-        customerName: name.trim(),
-        email: email.trim(),
-        channel,
-        pickupAt: pickupAt || null,
-        items: items.map(item => ({
-          menu_item_id: item.id,
-          quantity: item.quantity,
-          special_instructions: item.specialInstructions || null,
-          modifiers: item.modifiers?.map(mod => ({
-            modifier_option_id: mod.id,
-          })) || [],
-        })),
-      };
+      const orderData = orderDataForCheckout();
       const requestSignature = JSON.stringify(orderData);
       const stored = readStoredCheckoutAttempt();
       const requestMatchesStoredAttempt = stored?.requestSignature === requestSignature;
@@ -143,29 +164,8 @@ export default function CheckoutPage() {
         });
       }
 
-      if (!squareCardRef.current) throw new Error('Secure Square payment is not ready yet');
-      if (!squareTokenRef.current) {
-        const [givenName, ...familyNameParts] = name.trim().split(/\s+/);
-        const tokenResult = await squareCardRef.current.tokenize({
-          amount: total.toFixed(2),
-          billingContact: {
-            givenName,
-            familyName: familyNameParts.join(' ') || undefined,
-            email: email.trim(),
-            countryCode: 'US',
-          },
-          currencyCode: 'USD',
-          intent: 'CHARGE',
-          customerInitiated: true,
-          sellerKeyedIn: false,
-        });
-        if (tokenResult.status !== 'OK' || !tokenResult.token) {
-          const detail = tokenResult.errors?.[0]?.detail;
-          throw new Error(detail || 'Please check your card details and try again');
-        }
-        squareTokenRef.current = tokenResult.token;
-      }
-      orderData.paymentSourceToken = squareTokenRef.current;
+      squareTokenRef.current = paymentToken;
+      orderData.paymentSourceToken = paymentToken;
 
       const result = await orderAPI.create(
         orderData,
@@ -184,31 +184,70 @@ export default function CheckoutPage() {
       clearCart();
       navigate(`/orders/${result.id}`, { replace: true });
     } catch (err) {
-      console.error('Order failed:', err);
-      if (err.status === 402) {
-        paymentAttemptKeyRef.current = newCheckoutKey('payment');
-        squareTokenRef.current = null;
-        const stored = readStoredCheckoutAttempt();
-        if (stored?.requestSignature && idempotencyKeyRef.current) {
-          storeCheckoutAttempt({
-            ...stored,
-            idempotencyKey: idempotencyKeyRef.current,
-            paymentAttemptKey: paymentAttemptKeyRef.current,
-          });
-        }
-      } else if (err.status === 409) {
-        idempotencyKeyRef.current = null;
-        paymentAttemptKeyRef.current = null;
-        squareTokenRef.current = null;
-        storeCheckoutAttempt(null);
-      }
-      if (['ORDERING_CLOSED', 'PICKUP_TIME_UNAVAILABLE', 'PICKUP_SLOT_FULL'].includes(err.code)) {
-        setPickupAt('');
-        settingsAPI.getKitchenStatus().then(setKitchenStatus).catch(() => {});
-      }
-      setError(err.message || 'Failed to place order. Please try again.');
+      handleOrderError(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePaymentError = (paymentError) => {
+    handleOrderError(paymentError);
+    setLoading(false);
+  };
+
+  const handleApplePayStart = () => {
+    setError(null);
+    setLoading(true);
+  };
+
+  const handleApplePayToken = async (paymentToken) => {
+    await submitOrderWithToken(paymentToken);
+  };
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault?.();
+    if (loading) return;
+    setError(null);
+
+    if (!name.trim()) { setError('Please enter your name'); return; }
+    if (!email.trim()) { setError('Please enter your email'); return; }
+    if (items.length === 0) { setError('Your cart is empty'); return; }
+    if (!kitchenStatus.open) {
+      setError(kitchenStatus.message || 'Online ordering is paused. Please try again soon.');
+      return;
+    }
+    if (!squareCardRef.current) {
+      setError('Secure Square payment is not ready yet');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      let paymentToken = squareTokenRef.current;
+      if (!paymentToken) {
+        const [givenName, ...familyNameParts] = name.trim().split(/\s+/);
+        const tokenResult = await squareCardRef.current.tokenize({
+          amount: total.toFixed(2),
+          billingContact: {
+            givenName,
+            familyName: familyNameParts.join(' ') || undefined,
+            email: email.trim(),
+            countryCode: 'US',
+          },
+          currencyCode: 'USD',
+          intent: 'CHARGE',
+          customerInitiated: true,
+          sellerKeyedIn: false,
+        });
+        if (tokenResult.status !== 'OK' || !tokenResult.token) {
+          const detail = tokenResult.errors?.[0]?.detail;
+          throw new Error(detail || 'Please check your card details and try again');
+        }
+        paymentToken = tokenResult.token;
+      }
+      await submitOrderWithToken(paymentToken);
+    } catch (paymentError) {
+      handlePaymentError(paymentError);
     }
   };
 
@@ -319,7 +358,14 @@ export default function CheckoutPage() {
             )}
           </div>
 
-          <SquareCardField onReady={handleSquareReady} />
+          <SquareCardField
+            total={total}
+            onReady={handleSquareReady}
+            onApplePayStart={handleApplePayStart}
+            onApplePayToken={handleApplePayToken}
+            onPaymentError={handlePaymentError}
+            disabled={paymentDisabled}
+          />
 
           {/* Order Review */}
           <div className="rounded-2xl bg-white border border-muze-gold/20 shadow-sm p-6 mb-5">
@@ -386,7 +432,7 @@ export default function CheckoutPage() {
       <div className="fixed bottom-4 left-0 right-0 px-4 z-40">
         <button
           onClick={handleSubmit}
-          disabled={loading || !squareReady || !name.trim() || !email.trim() || !kitchenStatus.open}
+          disabled={paymentDisabled || !squareReady}
           className="w-full max-w-2xl mx-auto block py-4 rounded-2xl bg-muze-dark text-muze-gold font-bold text-lg hover:bg-muze-brown hover:text-white transition-colors shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {loading ? (
@@ -396,7 +442,7 @@ export default function CheckoutPage() {
           ) : !squareReady ? (
             <><Loader2 className="w-5 h-5 animate-spin" /> Loading secure payment…</>
           ) : (
-            <>Continue to Square · {formatPriceFromDollars(total)}</>
+            <>Pay with card · {formatPriceFromDollars(total)}</>
           )}
         </button>
       </div>

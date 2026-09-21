@@ -23,7 +23,14 @@ function loadSquareSdk(environment) {
   return squareSdkPromise;
 }
 
-export default function SquareCardField({ onReady }) {
+export default function SquareCardField({
+  total,
+  onReady,
+  onApplePayStart,
+  onApplePayToken,
+  onPaymentError,
+  disabled = false,
+}) {
   const applicationId = import.meta.env.VITE_SQUARE_APPLICATION_ID;
   const locationId = import.meta.env.VITE_SQUARE_LOCATION_ID;
   const environment = import.meta.env.VITE_SQUARE_ENVIRONMENT === 'production' ? 'production' : 'sandbox';
@@ -39,10 +46,13 @@ export default function SquareCardField({ onReady }) {
     if (environmentMismatch) return 'Square checkout is blocked because its application and environment do not match.';
     return null;
   });
+  const [applePay, setApplePay] = useState(null);
+  const [applePayBusy, setApplePayBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
     let card;
+    let applePayMethod;
     if (!canInitialize) {
       onReady(null);
       return undefined;
@@ -59,6 +69,29 @@ export default function SquareCardField({ onReady }) {
         await card.attach('#square-card-container');
         onReady(card);
         setStatus('ready');
+
+        // Apple Pay initialization is expected to fail on unsupported browsers,
+        // devices without Wallet, and domains that have not been registered.
+        // Keep card checkout available and only reveal Apple Pay when Square says
+        // the current buyer can use it.
+        try {
+          const paymentRequest = payments.paymentRequest({
+            countryCode: 'US',
+            currencyCode: 'USD',
+            total: {
+              amount: Number(total).toFixed(2),
+              label: 'Cuss Worthy Café at Muze',
+            },
+          });
+          applePayMethod = await payments.applePay(paymentRequest);
+          if (!active) {
+            await applePayMethod.destroy();
+            return;
+          }
+          setApplePay(applePayMethod);
+        } catch {
+          if (active) setApplePay(null);
+        }
       })
       .catch(loadError => {
         console.error('Square card initialization failed:', loadError);
@@ -70,9 +103,34 @@ export default function SquareCardField({ onReady }) {
     return () => {
       active = false;
       onReady(null);
+      setApplePay(null);
       card?.destroy().catch(() => {});
+      applePayMethod?.destroy().catch(() => {});
     };
-  }, [applicationId, canInitialize, environment, locationId, onReady]);
+  }, [applicationId, canInitialize, environment, locationId, onReady, total]);
+
+  const handleApplePayClick = async (event) => {
+    event.preventDefault();
+    if (!applePay || applePayBusy || disabled) return;
+
+    // Apple requires tokenize() to be invoked directly from the click handler,
+    // with no awaited work between the buyer gesture and this call.
+    const tokenPromise = applePay.tokenize();
+    onApplePayStart?.();
+    setApplePayBusy(true);
+    try {
+      const tokenResult = await tokenPromise;
+      if (tokenResult.status !== 'OK' || !tokenResult.token) {
+        const detail = tokenResult.errors?.[0]?.detail;
+        throw new Error(detail || 'Apple Pay was not completed. Please try again.');
+      }
+      await onApplePayToken(tokenResult.token);
+    } catch (paymentError) {
+      onPaymentError(paymentError);
+    } finally {
+      setApplePayBusy(false);
+    }
+  };
 
   return (
     <div className="rounded-2xl bg-white border border-muze-gold/20 shadow-sm p-6 mb-5">
@@ -86,7 +144,27 @@ export default function SquareCardField({ onReady }) {
           <span><strong>Test mode:</strong> only Square sandbox cards work, and no real charges can be created.</span>
         </div>
       ) : null}
-      <p className="text-sm text-muze-dark/60 mb-4">Your card details go directly to Square and are never stored by Muze.</p>
+      <p className="text-sm text-muze-dark/60 mb-4">Your payment details go directly to Square and are never stored by Muze.</p>
+      {applePay ? (
+        <>
+          <button
+            type="button"
+            className="apple-pay-button apple-pay-button-black w-full"
+            aria-label={`Pay ${Number(total).toFixed(2)} dollars with Apple Pay`}
+            onClick={handleApplePayClick}
+            disabled={disabled || applePayBusy}
+          >
+            <span className="sr-only">
+              {applePayBusy ? 'Completing Apple Pay' : `Pay $${Number(total).toFixed(2)} with Apple Pay`}
+            </span>
+          </button>
+          <div className="flex items-center gap-3 my-5" aria-hidden="true">
+            <span className="h-px flex-1 bg-muze-gold/20" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muze-dark/45">or pay by card</span>
+            <span className="h-px flex-1 bg-muze-gold/20" />
+          </div>
+        </>
+      ) : null}
       {status === 'loading' ? (
         <div className="h-20 rounded-xl bg-muze-cream/60 flex items-center justify-center gap-2 text-muze-dark/60">
           <Loader2 className="w-5 h-5 animate-spin" /> Loading secure payment…

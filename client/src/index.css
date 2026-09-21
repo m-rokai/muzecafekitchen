@@ -18,6 +18,25 @@
 }
 
 @layer components {
+  .apple-pay-button {
+    -webkit-appearance: -apple-pay-button;
+    -apple-pay-button-type: plain;
+    height: 48px;
+    min-width: 200px;
+    border: 0;
+    border-radius: 12px;
+    cursor: pointer;
+  }
+
+  .apple-pay-button-black {
+    -apple-pay-button-style: black;
+  }
+
+  .apple-pay-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
   .btn {
     @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2;
   }
