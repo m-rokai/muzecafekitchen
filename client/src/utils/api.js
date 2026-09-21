@@ -75,14 +75,30 @@ async function withBearer(endpoint, options, authSession) {
 }
 
 async function authRequest(endpoint, options = {}) {
+  const current = await requireSession();
   try {
-    return await withBearer(endpoint, options, await requireSession());
+    return await withBearer(endpoint, options, current);
   } catch (error) {
-    if (error.status === 401) {
+    if (error.status !== 401) throw error;
+  }
+
+  // A laptop waking from sleep can make one request with an expired access
+  // token before the background refresh timer runs. Preserve the durable
+  // refresh session, refresh once, and retry before asking for another link.
+  const { data, error: refreshError } = await supabase.auth.refreshSession();
+  if (refreshError || !data.session?.access_token) {
+    await supabase.auth.signOut({ scope: 'local' });
+    throw new Error('Session expired. Please sign in again.');
+  }
+
+  try {
+    return await withBearer(endpoint, options, data.session);
+  } catch (retryError) {
+    if (retryError.status === 401) {
       await supabase.auth.signOut({ scope: 'local' });
       throw new Error('Session expired. Please sign in again.');
     }
-    throw error;
+    throw retryError;
   }
 }
 

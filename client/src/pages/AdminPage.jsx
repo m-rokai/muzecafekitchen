@@ -1,5 +1,5 @@
 import { createElement, useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Plus,
   Pencil,
@@ -36,10 +36,12 @@ import { adminAPI } from '../utils/api';
 import { formatPacificPickupTime, formatPriceFromDollars } from '../utils/formatters';
 import StaffSignIn from '../components/StaffSignIn';
 import { useStaffAccess } from '../hooks/useStaffAccess';
+import KitchenDisplay from './KitchenDisplay';
 
 export default function AdminPage() {
-  const { authState, authError } = useStaffAccess('admin');
-  const [activeTab, setActiveTab] = useState('overview');
+  const { authState, authError, role, retry } = useStaffAccess('staff');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') || 'overview');
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [modifierGroups, setModifierGroups] = useState([]);
@@ -48,20 +50,33 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
 
+  const isAdmin = role === 'admin';
   const adminTabs = [
+    { id: 'kitchen', label: 'Kitchen', icon: ChefHat },
+    ...(isAdmin ? [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'items', label: 'Menu Items', icon: Package },
     { id: 'categories', label: 'Categories', icon: FolderOpen },
     { id: 'modifiers', label: 'Modifiers', icon: Sliders },
     { id: 'orders', label: 'Orders', icon: Receipt },
     { id: 'settings', label: 'Settings', icon: Settings },
+    ] : []),
   ];
+  const effectiveTab = adminTabs.some(tab => tab.id === activeTab)
+    ? activeTab
+    : isAdmin ? 'overview' : 'kitchen';
 
   useEffect(() => {
-    if (authState === 'authenticated') {
+    if (authState === 'authenticated' && role === 'admin') {
       loadData();
     }
-  }, [authState]);
+  }, [authState, role]);
+
+  function selectTab(tabId) {
+    const nextTab = !isAdmin && tabId !== 'kitchen' ? 'kitchen' : tabId;
+    setActiveTab(nextTab);
+    setSearchParams(nextTab === 'overview' ? {} : { tab: nextTab }, { replace: true });
+  }
 
   async function handleLogout() {
     await adminAPI.logout();
@@ -75,8 +90,23 @@ export default function AdminPage() {
     );
   }
 
+  if (authState === 'error') {
+    return (
+      <div className="min-h-screen bg-muze-dark flex items-center justify-center p-4">
+        <div className="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-xl">
+          <AlertCircle className="mx-auto h-10 w-10 text-amber-600" aria-hidden="true" />
+          <h1 className="mt-4 text-xl font-bold text-muze-dark text-balance">Your saved sign-in could not be verified</h1>
+          <p className="mt-2 text-sm text-gray-600 text-pretty">{authError}</p>
+          <button onClick={retry} className="btn btn-primary mt-6 w-full py-3 active:scale-[0.96] transition-transform">
+            Try saved session again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (authState === 'unauthenticated') {
-    return <StaffSignIn title="Admin Access" destination="/admin" authError={authError} />;
+    return <StaffSignIn title="Staff Dashboard" destination="/admin" authError={authError} />;
   }
 
   async function loadData() {
@@ -123,13 +153,6 @@ export default function AdminPage() {
               >
                 <span className="hidden xs:inline">View </span>Menu
               </Link>
-              <Link
-                to="/kitchen"
-                className="px-3 sm:px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors flex items-center gap-2 text-sm sm:text-base"
-              >
-                <ChefHat className="w-4 h-4" />
-                Kitchen
-              </Link>
               <button
                 onClick={handleLogout}
                 className="px-3 sm:px-4 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 transition-colors flex items-center gap-2"
@@ -149,8 +172,8 @@ export default function AdminPage() {
             <label htmlFor="admin-section" className="sr-only">Dashboard section</label>
             <select
               id="admin-section"
-              value={activeTab}
-              onChange={(event) => setActiveTab(event.target.value)}
+              value={effectiveTab}
+              onChange={(event) => selectTab(event.target.value)}
               className="h-11 w-full rounded-xl border border-white/20 bg-white/10 px-3 text-sm font-semibold text-white focus:border-muze-gold focus:outline-none focus:ring-2 focus:ring-muze-gold"
             >
               {adminTabs.map(tab => <option key={tab.id} value={tab.id} className="text-muze-dark">{tab.label}</option>)}
@@ -162,9 +185,9 @@ export default function AdminPage() {
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 rounded-t-lg px-4 py-3 text-sm font-medium transition-colors ${
-                    activeTab === tab.id
+                  onClick={() => selectTab(tab.id)}
+                  className={`flex min-h-11 items-center gap-2 rounded-t-lg px-4 py-3 text-sm font-medium transition-colors active:scale-[0.96] ${
+                    effectiveTab === tab.id
                       ? 'bg-gray-50 text-muze-dark'
                       : 'text-white/70 hover:text-white'
                   }`}
@@ -179,13 +202,14 @@ export default function AdminPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-3 sm:px-4 py-5 sm:py-8">
-        {loadError && (
+        {isAdmin && loadError && (
           <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             <span>{loadError}</span>
             <button onClick={loadData} className="font-semibold underline underline-offset-2">Retry</button>
           </div>
         )}
-        {activeTab === 'overview' && (
+        {effectiveTab === 'kitchen' && <KitchenDisplay />}
+        {isAdmin && effectiveTab === 'overview' && (
           <OverviewSection
             items={menuItems}
             categories={categories}
@@ -193,11 +217,11 @@ export default function AdminPage() {
             stats={stats}
             settings={settings}
             loading={loading}
-            onNavigate={setActiveTab}
+            onNavigate={selectTab}
             onUpdate={loadData}
           />
         )}
-        {activeTab === 'items' && (
+        {isAdmin && effectiveTab === 'items' && (
           <ItemsSection
             items={menuItems}
             categories={categories}
@@ -206,7 +230,7 @@ export default function AdminPage() {
             loading={loading}
           />
         )}
-        {activeTab === 'categories' && (
+        {isAdmin && effectiveTab === 'categories' && (
           <CategoriesSection
             categories={categories}
             itemCounts={menuItems.reduce((acc, item) => {
@@ -216,16 +240,16 @@ export default function AdminPage() {
             onUpdate={loadData}
           />
         )}
-        {activeTab === 'modifiers' && (
+        {isAdmin && effectiveTab === 'modifiers' && (
           <ModifiersSection
             modifierGroups={modifierGroups}
             onUpdate={loadData}
           />
         )}
-        {activeTab === 'orders' && (
+        {isAdmin && effectiveTab === 'orders' && (
           <OrdersSection />
         )}
-        {activeTab === 'settings' && (
+        {isAdmin && effectiveTab === 'settings' && (
           <SettingsSection
             key={`${settings.tax_rate}:${settings.announcement_text}:${settings.announcement_enabled}`}
             settings={settings}
@@ -382,7 +406,7 @@ function OverviewSection({
             <button onClick={() => onNavigate('orders')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Review orders</button>
             <button onClick={() => onNavigate('items')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Edit café menu</button>
             <button onClick={() => onNavigate('categories')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Edit categories</button>
-            <Link to="/kitchen" className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold hover:bg-gray-50">Kitchen display</Link>
+            <button onClick={() => onNavigate('kitchen')} className="rounded-xl border border-gray-200 p-3 text-left text-sm font-semibold transition-colors hover:bg-gray-50 active:scale-[0.96]">Kitchen display</button>
           </div>
         </section>
       </div>

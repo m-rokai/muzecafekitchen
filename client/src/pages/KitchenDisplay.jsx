@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Clock, ChefHat, CheckCircle, Bell, Volume2, VolumeX, RefreshCw, LogOut, Lock, Unlock, X } from 'lucide-react';
-import { orderAPI, adminAPI } from '../utils/api';
+import { Clock, ChefHat, CheckCircle, Bell, Volume2, VolumeX, RefreshCw, Lock, Unlock, X } from 'lucide-react';
+import { orderAPI } from '../utils/api';
 import { supabase } from '../lib/supabase';
 import { formatPacificPickupTime, formatPickupNumber, formatTimeSince } from '../utils/formatters';
-import StaffSignIn from '../components/StaffSignIn';
-import { useStaffAccess } from '../hooks/useStaffAccess';
 import CancelReasonModal from '../components/CancelReasonModal';
 
 export default function KitchenDisplay() {
-  const { authState, authError } = useStaffAccess('staff');
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -37,10 +34,6 @@ export default function KitchenDisplay() {
 
     return () => clearInterval(clockInterval);
   }, []);
-
-  async function handleLogout() {
-    await adminAPI.logout();
-  }
 
   const loadOrders = useCallback(async () => {
     try {
@@ -96,10 +89,9 @@ export default function KitchenDisplay() {
     }
   }, []);
 
-  // Subscribe to the private kitchen broadcast channel when authenticated.
+  // The parent dashboard verifies staff access before mounting this panel.
+  // Subscribe to the private kitchen broadcast channel while the tab is open.
   useEffect(() => {
-    if (authState !== 'authenticated') return;
-
     // Initialize Web Audio API for notification sound
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     audioRef.current = audioContext;
@@ -134,7 +126,7 @@ export default function KitchenDisplay() {
       clearInterval(interval);
       audioContext.close();
     };
-  }, [authState, loadKitchenStatus, loadOrders, playNotification]);
+  }, [loadKitchenStatus, loadOrders, playNotification]);
 
   async function toggleKitchen(open, message = '') {
     setKitchenToggling(true);
@@ -196,31 +188,19 @@ export default function KitchenDisplay() {
   const preparingOrders = orders.filter(o => o.status === 'preparing').sort(sortByTime);
   const readyOrders = orders.filter(o => o.status === 'ready').sort(sortByTime);
 
-  if (authState === 'checking') {
-    return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <RefreshCw className="w-8 h-8 animate-spin text-muze-gold" />
-      </div>
-    );
-  }
-
-  if (authState === 'unauthenticated') {
-    return <StaffSignIn title="Kitchen Access" destination="/kitchen" authError={authError} />;
-  }
-
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
+    <section className="relative min-h-[70vh] overflow-hidden rounded-2xl bg-gray-900 text-white shadow-xl shadow-gray-950/10">
       {/* Header */}
-      <header className="bg-muze-primary px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-4 bg-muze-primary px-4 py-4 sm:px-6">
+        <div className="flex items-center gap-3 sm:gap-4">
           <ChefHat className="w-8 h-8" />
           <div>
-            <h1 className="text-2xl font-bold">Kitchen Display</h1>
-            <p className="text-sm text-white/70">Muze Office</p>
+            <h2 className="text-xl font-bold text-balance sm:text-2xl">Kitchen Display</h2>
+            <p className="text-sm text-white/70">Live café order queue</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
           {/* Connection Status */}
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${
             connected ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
@@ -234,7 +214,7 @@ export default function KitchenDisplay() {
             onClick={() => kitchenOpen ? setShowCloseModal(true) : toggleKitchen(true)}
             disabled={kitchenToggling}
             title={kitchenOpen ? 'Close ordering — customers can\'t place new orders' : 'Re-open ordering'}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            className={`flex min-h-10 items-center gap-2 rounded-full px-4 py-1.5 text-sm font-semibold transition-colors active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50 ${
               kitchenOpen
                 ? 'bg-green-500/20 text-green-300 hover:bg-green-500/30'
                 : 'bg-red-500/30 text-red-200 hover:bg-red-500/40 ring-1 ring-red-400/50'
@@ -247,7 +227,8 @@ export default function KitchenDisplay() {
           {/* Sound Toggle */}
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
-            className={`p-2 rounded-lg ${soundEnabled ? 'bg-white/10' : 'bg-white/5 text-white/50'}`}
+            className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors active:scale-[0.96] ${soundEnabled ? 'bg-white/10 hover:bg-white/20' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}
+            aria-label={soundEnabled ? 'Mute new order sounds' : 'Enable new order sounds'}
           >
             {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
           </button>
@@ -255,24 +236,16 @@ export default function KitchenDisplay() {
           {/* Refresh */}
           <button
             onClick={loadOrders}
-            className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+            className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 transition-colors hover:bg-white/20 active:scale-[0.96]"
+            aria-label="Refresh kitchen orders"
           >
             <RefreshCw className="w-5 h-5" />
           </button>
 
           {/* Time */}
-          <div className="text-xl font-mono">
+          <div className="hidden font-mono text-sm tabular-nums sm:block lg:text-xl">
             {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
           </div>
-
-          {/* Logout */}
-          <button
-            onClick={handleLogout}
-            className="p-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 transition-colors"
-            title="Logout"
-          >
-            <LogOut className="w-5 h-5" />
-          </button>
         </div>
       </header>
 
@@ -349,7 +322,7 @@ export default function KitchenDisplay() {
       )}
 
       {/* Orders Grid */}
-      <main className="p-6">
+      <div className="p-4 pb-28 sm:p-6 sm:pb-28">
         {loading ? (
           <div className="flex items-center justify-center h-[60vh]">
             <RefreshCw className="w-8 h-8 animate-spin text-white/50" />
@@ -442,11 +415,11 @@ export default function KitchenDisplay() {
             )}
           </div>
         )}
-      </main>
+      </div>
 
       {/* Status Summary */}
-      <footer className="fixed bottom-0 left-0 right-0 bg-muze-primary px-6 py-4">
-        <div className="flex justify-center gap-8">
+      <footer className="sticky bottom-3 z-20 mx-3 rounded-xl bg-muze-primary/95 px-4 py-3 shadow-2xl shadow-black/30 backdrop-blur sm:mx-6 sm:px-6 sm:py-4">
+        <div className="flex justify-center gap-4 sm:gap-8">
           <StatusBadge label="Pending" count={pendingOrders.length} color="yellow" />
           <StatusBadge label="Preparing" count={preparingOrders.length} color="blue" />
           <StatusBadge label="Ready" count={readyOrders.length} color="green" />
@@ -461,7 +434,7 @@ export default function KitchenDisplay() {
           onClose={() => setCancelTarget(null)}
         />
       )}
-    </div>
+    </section>
   );
 }
 
@@ -480,7 +453,7 @@ function OrderCard({ order, onStart, onComplete, onPickup, onCancel, isUpdating 
       {/* Header */}
       <div className="bg-white/5 px-4 py-3 flex items-center justify-between">
         <div>
-          <p className="text-3xl font-bold">{formatPickupNumber(order.pickup_number)}</p>
+          <p className="text-3xl font-bold tabular-nums">{formatPickupNumber(order.pickup_number)}</p>
           <p className="text-lg text-white/70">{order.customer_name}</p>
         </div>
         <div className="text-right">
@@ -595,7 +568,7 @@ function StatusBadge({ label, count, color }) {
     <div className="flex items-center gap-3">
       <span className={`w-3 h-3 rounded-full ${colors[color]}`} />
       <span className="text-white/70">{label}</span>
-      <span className="text-2xl font-bold">{count}</span>
+      <span className="text-2xl font-bold tabular-nums">{count}</span>
     </div>
   );
 }

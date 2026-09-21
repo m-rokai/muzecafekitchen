@@ -7,7 +7,6 @@ const MenuPage = lazy(() => import('./pages/MenuPage'));
 const CartPage = lazy(() => import('./pages/CartPage'));
 const CheckoutPage = lazy(() => import('./pages/CheckoutPage'));
 const ConfirmationPage = lazy(() => import('./pages/ConfirmationPage'));
-const KitchenDisplay = lazy(() => import('./pages/KitchenDisplay'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 const ClosurePage = lazy(() => import('./pages/ClosurePage'));
 const AuthCallbackPage = lazy(() => import('./pages/AuthCallbackPage'));
@@ -22,7 +21,7 @@ function App() {
               <>
                 {/* Café offline — staff routes stay reachable, everything else
                     falls through to the closure screen. Toggle in config/closure.js. */}
-                <Route path="/kitchen" element={<KitchenDisplay />} />
+                <Route path="/kitchen" element={<Navigate to="/admin?tab=kitchen" replace />} />
                 <Route path="/admin" element={<AdminPage />} />
                 <Route path="*" element={<ClosurePage />} />
               </>
@@ -37,7 +36,7 @@ function App() {
                 <Route path="/confirmation/:orderId" element={<ConfirmationPage />} />
                 <Route path="/cart" element={<Navigate to="/cafe/cart" replace />} />
                 <Route path="/checkout" element={<Navigate to="/cafe/checkout" replace />} />
-                <Route path="/kitchen" element={<KitchenDisplay />} />
+                <Route path="/kitchen" element={<Navigate to="/admin?tab=kitchen" replace />} />
                 <Route path="/admin" element={<AdminPage />} />
                 <Route path="*" element={<Navigate to="/cafe" replace />} />
               </>

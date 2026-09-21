@@ -6,7 +6,9 @@ import { adminAPI } from '../utils/api';
 
 export default function AuthCallbackPage() {
   const [destination] = useState(() => (
-    new URLSearchParams(window.location.search).get('next') === '/kitchen' ? '/kitchen' : '/admin'
+    new URLSearchParams(window.location.search).get('next') === '/kitchen'
+      ? '/admin?tab=kitchen'
+      : '/admin'
   ));
   const [linkError] = useState(() => {
     const query = new URLSearchParams(window.location.search);
@@ -27,8 +29,7 @@ export default function AuthCallbackPage() {
           throw new Error('This sign-in link is missing or invalid. Request a new link below.');
         }
         const result = await adminAPI.verifyToken();
-        const roles = destination === '/admin' ? ['admin'] : ['admin', 'staff'];
-        if (!roles.includes(result.auth?.role)) {
+        if (!['admin', 'staff'].includes(result.auth?.role)) {
           throw new Error('This account does not have access to this page. Use an authorized work email.');
         }
         if (!cancelled) setVerified(true);

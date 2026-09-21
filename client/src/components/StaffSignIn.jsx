@@ -54,7 +54,9 @@ export default function StaffSignIn({ title = 'Staff Access', destination = '/ad
             <Mail className="w-8 h-8 text-muze-gold" aria-hidden="true" />
           </div>
           <h1 className="text-2xl font-bold text-muze-dark">{title}</h1>
-          <p className="text-gray-500 mt-2">We’ll email you a link to sign in. No password needed.</p>
+          <p className="text-gray-500 mt-2 text-pretty">
+            We’ll email you a link once, then keep this device signed in securely until you log out or the session expires.
+          </p>
         </div>
 
         {sentTo && (
