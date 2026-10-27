@@ -158,17 +158,23 @@ export async function getMenuItem(id) {
 }
 
 export async function createMenuItem(item) {
-  const [row] = await getSql()`
-    insert into public.menu_items
-      (name, description, price_cents, category_id, image_url, available, sort_order)
-    values (
-      ${item.name}, ${item.description || ''}, ${dollarsToCents(item.price)},
-      ${item.category_id || null}, ${item.image_url || null},
-      ${item.available === undefined ? true : Boolean(item.available)}, ${item.sort_order || 0}
-    )
-    returning id
-  `;
-  return idNumber(row.id);
+  return getSql().begin(async sql => {
+    const [row] = await sql`
+      insert into public.menu_items
+        (name, description, price_cents, category_id, image_url, available, sort_order)
+      values (
+        ${item.name}, ${item.description || ''}, ${dollarsToCents(item.price)},
+        ${item.category_id || null}, ${item.image_url || null},
+        ${item.available === undefined ? true : Boolean(item.available)}, ${item.sort_order || 0}
+      )
+      returning id
+    `;
+    const id = idNumber(row.id);
+    if (item.modifier_group_ids !== undefined) {
+      await replaceItemModifierGroups(sql, id, item.modifier_group_ids);
+    }
+    return id;
+  });
 }
 
 export async function updateMenuItem(id, updates) {
@@ -176,8 +182,16 @@ export async function updateMenuItem(id, updates) {
   const values = allowedUpdates(updates, ['name', 'description', 'category_id', 'image_url', 'available', 'sort_order']);
   if (updates.price !== undefined) values.price_cents = dollarsToCents(updates.price);
   if (values.available !== undefined) values.available = Boolean(values.available);
-  if (Object.keys(values).length === 0) return null;
-  return sql`update public.menu_items set ${sql(values)} where id = ${id}`;
+  if (Object.keys(values).length === 0 && updates.modifier_group_ids === undefined) return null;
+  return sql.begin(async tx => {
+    const result = Object.keys(values).length
+      ? await tx`update public.menu_items set ${tx(values)} where id = ${id}`
+      : null;
+    if (updates.modifier_group_ids !== undefined) {
+      await replaceItemModifierGroups(tx, id, updates.modifier_group_ids);
+    }
+    return result;
+  });
 }
 
 export async function deleteMenuItem(id) {
@@ -339,15 +353,17 @@ export async function linkItemToModifierGroup(itemId, groupId) {
 
 export async function setItemModifierGroups(itemId, groupIds) {
   const sql = getSql();
-  return sql.begin(async tx => {
-    await tx`delete from public.item_modifier_groups where item_id = ${itemId}`;
-    for (const groupId of groupIds) {
-      await tx`
-        insert into public.item_modifier_groups (item_id, group_id)
-        values (${itemId}, ${groupId})
-      `;
-    }
-  });
+  return sql.begin(tx => replaceItemModifierGroups(tx, itemId, groupIds));
+}
+
+async function replaceItemModifierGroups(sql, itemId, groupIds) {
+  await sql`delete from public.item_modifier_groups where item_id = ${itemId}`;
+  for (const groupId of new Set(groupIds)) {
+    await sql`
+      insert into public.item_modifier_groups (item_id, group_id)
+      values (${itemId}, ${groupId})
+    `;
+  }
 }
 
 export async function clearItemModifierLinks() {

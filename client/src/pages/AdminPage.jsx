@@ -30,6 +30,7 @@ import {
   FileText,
   User,
   ImageIcon,
+  Upload,
   LayoutDashboard,
 } from 'lucide-react';
 import { adminAPI } from '../utils/api';
@@ -435,27 +436,30 @@ function ItemsSection({ items, categories, modifierGroups, onUpdate, loading }) 
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [actionError, setActionError] = useState(null);
 
   const filteredItems = selectedCategory
     ? items.filter(item => item.category_id === selectedCategory)
     : items;
 
   async function toggleAvailability(itemId, currentlyAvailable) {
+    setActionError(null);
     try {
       await adminAPI.toggleItemAvailability(itemId, !currentlyAvailable);
       onUpdate();
     } catch (err) {
-      console.error('Failed to update availability:', err);
+      setActionError(err.message || 'Failed to update availability');
     }
   }
 
   async function deleteItem(itemId) {
     if (!confirm('Delete this item?')) return;
+    setActionError(null);
     try {
       await adminAPI.deleteItem(itemId);
       onUpdate();
     } catch (err) {
-      console.error('Failed to delete item:', err);
+      setActionError(err.message || 'Failed to delete item');
     }
   }
 
@@ -472,6 +476,7 @@ function ItemsSection({ items, categories, modifierGroups, onUpdate, loading }) 
       {/* Add/Edit Form Modal */}
       {(showAddForm || editingItem) && (
         <ItemForm
+          key={editingItem?.id || 'new'}
           item={editingItem}
           categories={categories}
           modifierGroups={modifierGroups}
@@ -528,6 +533,12 @@ function ItemsSection({ items, categories, modifierGroups, onUpdate, loading }) 
           );
         })}
       </div>
+
+      {actionError && (
+        <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          {actionError}
+        </div>
+      )}
 
       {/* Items Table */}
       <div className="card overflow-hidden">
@@ -609,12 +620,14 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
     price: item?.price?.toString() || '',
     category_id: item?.category_id || '',
     available: item?.available !== undefined ? item.available : 1,
-    modifier_group_ids: [],
+    modifier_group_ids: item?.id ? null : [],
     image_url: item?.image_url || null,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
-  const [loadingModifiers, setLoadingModifiers] = useState(false);
+  const [modifierLoadError, setModifierLoadError] = useState(null);
+  const [modifierRetry, setModifierRetry] = useState(0);
+  const loadingModifiers = form.modifier_group_ids === null && !modifierLoadError;
   const [uploadingImage, setUploadingImage] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -623,15 +636,17 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
     if (!file) return;
 
     // Validate file type
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
-      setError('Please select a valid image file (JPEG, PNG, GIF, or WebP)');
+      setError('Please select a valid image file (JPEG, PNG, or WebP)');
+      e.target.value = '';
       return;
     }
 
     // Validate file size (5MB)
     if (file.size > 5 * 1024 * 1024) {
       setError('Image must be smaller than 5MB');
+      e.target.value = '';
       return;
     }
 
@@ -659,33 +674,40 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
     setForm(f => ({ ...f, image_url: null }));
   }
 
-  const loadItemModifiers = useCallback(async () => {
-    if (!item?.id) return;
-    setLoadingModifiers(true);
-    try {
-      const fullItem = await adminAPI.getItem(item.id);
-      if (fullItem.modifier_groups) {
-        setForm(f => ({
-          ...f,
-          modifier_group_ids: fullItem.modifier_groups.map(g => g.id),
-        }));
-      }
-    } catch (err) {
-      console.error('Failed to load item modifiers:', err);
-    } finally {
-      setLoadingModifiers(false);
-    }
-  }, [item]);
-
   useEffect(() => {
-    const timer = setTimeout(loadItemModifiers, 0);
-    return () => clearTimeout(timer);
-  }, [loadItemModifiers]);
+    if (!item?.id) return;
+    let active = true;
+    async function loadItemModifiers() {
+      try {
+        const fullItem = await adminAPI.getItem(item.id);
+        if (!Array.isArray(fullItem.modifier_groups)) {
+          throw new Error('Item modifier groups could not be loaded');
+        }
+        if (active) {
+          setForm(f => ({ ...f, modifier_group_ids: fullItem.modifier_groups.map(group => group.id) }));
+        }
+      } catch (err) {
+        if (active) setModifierLoadError(err.message || 'Failed to load item modifier groups');
+      }
+    }
+    loadItemModifiers();
+    return () => { active = false; };
+  }, [item?.id, modifierRetry]);
+
+  function retryItemModifiers() {
+    setModifierLoadError(null);
+    setModifierRetry(value => value + 1);
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!form.name || !form.price) {
+    if (saving || uploadingImage || form.modifier_group_ids === null) return;
+    if (!form.name.trim() || form.price === '') {
       setError('Name and price are required');
+      return;
+    }
+    if (!Number.isFinite(Number(form.price)) || Number(form.price) < 0) {
+      setError('Price must be a non-negative number');
       return;
     }
 
@@ -694,7 +716,7 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
 
     try {
       const data = {
-        name: form.name,
+        name: form.name.trim(),
         description: form.description,
         price: parseFloat(form.price),
         category_id: form.category_id || null,
@@ -727,9 +749,9 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+      <div role="dialog" aria-modal="true" aria-labelledby="item-form-title" className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
         <div className="p-6 border-b">
-          <h2 className="text-xl font-bold">{item ? 'Edit Item' : 'Add New Item'}</h2>
+          <h2 id="item-form-title" className="text-xl font-bold">{item ? 'Edit Item' : 'Add New Item'}</h2>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -754,14 +776,14 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  accept="image/jpeg,image/png,image/webp"
                   onChange={handleImageUpload}
                   className="hidden"
                 />
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadingImage}
+                  disabled={uploadingImage || saving}
                   className="btn btn-secondary py-2 px-4 text-sm flex items-center gap-2"
                 >
                   {uploadingImage ? (
@@ -780,12 +802,13 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
                   <button
                     type="button"
                     onClick={handleRemoveImage}
+                    disabled={uploadingImage || saving}
                     className="text-sm text-red-600 hover:text-red-800"
                   >
                     Remove image
                   </button>
                 )}
-                <p className="text-xs text-gray-500">JPEG, PNG, GIF, or WebP. Max 5MB.</p>
+                <p className="text-xs text-gray-500">JPEG, PNG, or WebP. Max 5MB.</p>
               </div>
             </div>
           </div>
@@ -798,6 +821,7 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               className="input"
               placeholder="Item name"
+              maxLength={100}
               required
             />
           </div>
@@ -810,6 +834,7 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
               className="input"
               rows={3}
               placeholder="Item description"
+              maxLength={500}
             />
           </div>
 
@@ -866,6 +891,11 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
                 <RefreshCw className="w-4 h-4 animate-spin" />
                 Loading...
               </div>
+            ) : modifierLoadError ? (
+              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                <p>{modifierLoadError}. Load the existing groups before saving this item.</p>
+                <button type="button" onClick={retryItemModifiers} className="mt-2 font-semibold underline">Retry loading groups</button>
+              </div>
             ) : (
               <div className="space-y-2 max-h-40 overflow-y-auto border rounded-lg p-3">
                 {modifierGroups.length === 0 ? (
@@ -875,8 +905,9 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
                     <label key={group.id} className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={form.modifier_group_ids.includes(group.id)}
+                        checked={form.modifier_group_ids?.includes(group.id) || false}
                         onChange={() => toggleModifierGroup(group.id)}
+                        disabled={saving}
                         className="w-4 h-4 rounded border-gray-300 text-muze-accent focus:ring-muze-accent"
                       />
                       <span className="text-sm text-gray-700">{group.display_name || group.name}</span>
@@ -889,17 +920,17 @@ function ItemForm({ item, categories, modifierGroups, onSave, onCancel }) {
           </div>
 
           {error && (
-            <div className="p-3 bg-red-50 rounded-lg border border-red-200 flex items-center gap-2">
+            <div role="alert" className="p-3 bg-red-50 rounded-lg border border-red-200 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-500" />
               <span className="text-red-800 text-sm">{error}</span>
             </div>
           )}
 
           <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-4 border-t">
-            <button type="button" onClick={onCancel} className="btn btn-secondary w-full sm:w-auto">
+            <button type="button" onClick={onCancel} disabled={saving || uploadingImage} className="btn btn-secondary w-full sm:w-auto">
               Cancel
             </button>
-            <button type="submit" disabled={saving} className="btn btn-primary flex items-center justify-center gap-2 w-full sm:w-auto">
+            <button type="submit" disabled={saving || uploadingImage || form.modifier_group_ids === null} className="btn btn-primary flex items-center justify-center gap-2 w-full sm:w-auto">
               {saving ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
