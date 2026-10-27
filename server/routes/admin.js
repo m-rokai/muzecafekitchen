@@ -9,6 +9,7 @@ import { getSupabaseAdminClient } from '../lib/supabase.js';
 import {
   validateCategory,
   validateMenuItem,
+  validateMenuItemUpdate,
   validateSettingValue,
 } from '../validators/schemas.js';
 import { sanitizeText, sanitizeMenuItemName } from '../utils/sanitize.js';
@@ -334,7 +335,6 @@ router.post('/items', async (req, res) => {
       name,
       description: sanitizeText(data.description) || '',
     });
-    if (data.modifier_group_ids?.length) await db.setItemModifierGroups(id, data.modifier_group_ids);
     return res.status(201).json({ id, name, price: data.price });
   } catch (error) {
     console.error('Error creating item:', error);
@@ -345,9 +345,11 @@ router.post('/items', async (req, res) => {
 router.put('/items/:id', async (req, res) => {
   try {
     const id = Number.parseInt(req.params.id, 10);
-    const { modifier_group_ids: groupIds, ...updates } = req.body;
-    await db.updateMenuItem(id, updates);
-    if (groupIds !== undefined) await db.setItemModifierGroups(id, groupIds);
+    const validation = validateMenuItemUpdate(req.body);
+    if (!validation.success) {
+      return res.status(400).json({ message: 'Invalid item data', errors: validation.errors });
+    }
+    await db.updateMenuItem(id, validation.data);
     res.json({ message: 'Item updated', id });
   } catch (error) {
     console.error('Error updating item:', error);

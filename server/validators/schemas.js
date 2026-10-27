@@ -63,18 +63,25 @@ export function validateCategory(data) {
 
 // ============ Menu Item Validation ============
 
-const MenuItemSchema = z.object({
+const MenuItemFields = z.object({
   name: z.string().min(1, 'Name is required').max(100),
-  description: z.string().max(500).optional().default(''),
+  description: z.string().max(500).optional(),
   price: z.number().min(0, 'Price must be non-negative'),
   category_id: z.number().int().positive().nullable().optional(),
-  available: z.union([z.boolean(), z.number().int().min(0).max(1)]).default(1),
-  sort_order: z.number().int().min(0).default(0),
-  modifier_group_ids: z.array(z.number().int().positive()).optional(),
+  image_url: z.string().max(2048).nullable().optional(),
+  available: z.union([z.boolean(), z.number().int().min(0).max(1)]).optional(),
+  sort_order: z.number().int().min(0).optional(),
+  modifier_group_ids: z.array(z.number().int().positive()).transform(ids => [...new Set(ids)]).optional(),
 });
 
-export function validateMenuItem(data) {
-  const result = MenuItemSchema.safeParse(data);
+const MenuItemSchema = MenuItemFields.extend({
+  description: MenuItemFields.shape.description.default(''),
+  available: MenuItemFields.shape.available.default(1),
+  sort_order: MenuItemFields.shape.sort_order.default(0),
+});
+
+function parseMenuItem(schema, data) {
+  const result = schema.safeParse(data);
   if (!result.success) {
     return {
       success: false,
@@ -85,6 +92,16 @@ export function validateMenuItem(data) {
     };
   }
   return { success: true, data: result.data };
+}
+
+export function validateMenuItem(data) {
+  return parseMenuItem(MenuItemSchema, data);
+}
+
+export function validateMenuItemUpdate(data) {
+  // Defaults belong to creation only. Editing a photo must not reset stock,
+  // ordering, descriptions, or modifier assignments that were not submitted.
+  return parseMenuItem(MenuItemFields.partial(), data);
 }
 
 // ============ Modifier Group Validation ============
